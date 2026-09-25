@@ -71,7 +71,10 @@ async function fetchCandidates() {
     SELECT ?p ?links WHERE {
       ?p wikibase:sitelinks ?links . hint:Prior hint:rangeSafe true .
       FILTER(?links >= ${MIN_FAME})
-      ?p wdt:P31 wd:Q5 ; wdt:P570 ?death ; wdt:P19/wdt:P625 ?bc ; wdt:P20/wdt:P625 ?dc .
+      ?p wdt:P31 wd:Q5 ; wdt:P570 ?death ; wdt:P19 ?bp ; wdt:P20 ?dp .
+      # A place without coordinates of its own uses the town/city it's in.
+      { ?bp wdt:P625 ?bc } UNION { ?bp wdt:P131/wdt:P625 ?bc }
+      { ?dp wdt:P625 ?dc } UNION { ?dp wdt:P131/wdt:P625 ?dc }
     }`);
   const fame = new Map();
   for (const r of rows) fame.set(qid(r.p.value), Number(r.links.value));
@@ -93,8 +96,13 @@ async function fetchDetails(ids) {
       OPTIONAL { ?p schema:description ?desc . FILTER(lang(?desc) = "en") }
       ?p wdt:P569 ?birth ; p:P569/psv:P569 [ wikibase:timeValue ?birth ; wikibase:timePrecision ?bprec ] .
       ?p wdt:P570 ?death ; p:P570/psv:P570 [ wikibase:timeValue ?death ; wikibase:timePrecision ?dprec ] .
-      ?p wdt:P19 ?bp . ?bp wdt:P625 ?bcoord . OPTIONAL { ?bp wdt:P17 ?bc . } OPTIONAL { ?bp wdt:P131 ?ba . }
-      ?p wdt:P20 ?dp . ?dp wdt:P625 ?dcoord . OPTIONAL { ?dp wdt:P17 ?dc . } OPTIONAL { ?dp wdt:P131 ?da . }
+      ?p wdt:P19 ?bp . OPTIONAL { ?bp wdt:P17 ?bc . } OPTIONAL { ?bp wdt:P131 ?ba . OPTIONAL { ?ba wdt:P625 ?bacoord } }
+      ?p wdt:P20 ?dp . OPTIONAL { ?dp wdt:P17 ?dc . } OPTIONAL { ?dp wdt:P131 ?da . OPTIONAL { ?da wdt:P625 ?dacoord } }
+      OPTIONAL { ?bp wdt:P625 ?bpcoord } OPTIONAL { ?dp wdt:P625 ?dpcoord }
+      # A place without coordinates of its own uses the town/city it's in.
+      BIND(COALESCE(?bpcoord, ?bacoord) AS ?bcoord)
+      BIND(COALESCE(?dpcoord, ?dacoord) AS ?dcoord)
+      FILTER(BOUND(?bcoord) && BOUND(?dcoord))
       SERVICE wikibase:label { bd:serviceParam wikibase:language "en,mul".
         ?bp rdfs:label ?bpLabel . ?dp rdfs:label ?dpLabel . ?bc rdfs:label ?bcLabel . ?dc rdfs:label ?dcLabel .
         ?ba rdfs:label ?baLabel . ?da rdfs:label ?daLabel . }
