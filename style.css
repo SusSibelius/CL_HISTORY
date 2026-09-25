@@ -96,6 +96,21 @@ html, body {
   transition: transform 0.25s ease;
 }
 .streak-num.bump { transform: scale(1.35); }
+.player-chip {
+  max-width: 44vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--glass);
+  border-radius: 999px;
+  padding: 8px 14px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+  font-size: 13px;
+  font-weight: 600;
+}
+.player-chip[hidden] { display: none; }
+
 .streak-label {
   font-size: 12px;
   color: var(--ink-soft);
@@ -291,7 +306,7 @@ html, body {
   100% { box-shadow: var(--shadow); }
 }
 
-/* ---------- Game over overlay ---------- */
+/* ---------- Daily card overlay ---------- */
 .overlay {
   position: fixed;
   inset: 0;
@@ -299,6 +314,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 16px;
   background: rgba(34, 38, 43, 0.45);
   backdrop-filter: blur(3px);
   animation: overlay-in 0.25s ease;
@@ -311,19 +327,30 @@ html, body {
   to { opacity: 1; }
 }
 .overlay-card {
-  width: min(360px, calc(100vw - 48px));
+  width: min(400px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
   background: var(--paper);
   border-radius: 22px;
-  padding: 32px 28px 28px;
+  padding: 28px 26px 24px;
   text-align: center;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3);
 }
-.overlay-eyebrow {
-  margin: 0 0 6px 0;
-  font-size: 13px;
-  color: var(--wrong);
+.card-eyebrow {
+  margin: 0 0 14px 0;
+  font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
 }
+.card-lead {
+  margin: 0 0 4px 0;
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+.card-lead.good { color: var(--born); font-weight: 600; }
+.card-lead.bad { color: var(--wrong); font-weight: 600; }
 .overlay-card h1 {
   margin: 0 0 6px 0;
   font-family: "Fraunces", serif;
@@ -331,29 +358,66 @@ html, body {
   font-weight: 700;
   line-height: 1.2;
 }
-.overlay-sub {
-  margin: 0 0 20px 0;
+.card-name {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.reroll {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(34, 38, 43, 0.06);
+  color: var(--ink);
+  font-size: 16px;
+  cursor: pointer;
+  margin-bottom: 6px;
+  transition: background 0.15s ease, transform 0.3s ease;
+}
+.reroll:hover { background: rgba(214, 164, 25, 0.2); transform: rotate(90deg); }
+.reroll:disabled { opacity: 0.4; cursor: default; }
+.card-sub {
+  margin: 0 0 16px 0;
   font-size: 14px;
   color: var(--ink-soft);
 }
-.overlay-stats {
+.card-rules {
+  margin: 10px 0 20px 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+.card-rules strong { color: var(--ink); }
+.card-stats {
   display: flex;
   justify-content: center;
   gap: 36px;
-  margin-bottom: 24px;
+  margin: 8px 0 12px;
 }
-.overlay-stat-num {
+.card-stat-num {
   display: block;
   font-family: "Fraunces", serif;
   font-weight: 700;
   font-size: 30px;
   color: var(--accent);
 }
-.overlay-stat-label {
+.card-stat-label {
   font-size: 12px;
   color: var(--ink-soft);
 }
-.play-again {
+.card-next {
+  margin: 0 0 4px 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.card-next strong {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.primary-btn {
   border: none;
   background: var(--ink);
   color: var(--paper);
@@ -364,13 +428,89 @@ html, body {
   border-radius: 999px;
   cursor: pointer;
   width: 100%;
-  transition: transform 0.15s ease;
+  transition: transform 0.15s ease, opacity 0.15s ease;
 }
-.play-again:hover { transform: translateY(-1px); }
+.primary-btn:hover { transform: translateY(-1px); }
+.primary-btn:disabled { opacity: 0.6; cursor: default; transform: none; }
+
+/* Leaderboard */
+.card-board {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(34, 38, 43, 0.1);
+  text-align: left;
+}
+.board-title {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.board-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+.board-note code { font-size: 12px; }
+.board {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.board li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+.board li:nth-child(odd) { background: rgba(34, 38, 43, 0.035); }
+.board li.me { background: rgba(214, 164, 25, 0.18); font-weight: 600; }
+.board-rank {
+  width: 22px;
+  flex: none;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.board-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-name em { font-style: normal; color: var(--ink-soft); font-weight: 400; }
+.board-live {
+  flex: none;
+  font-size: 11px;
+  color: var(--born);
+}
+.board-live::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--born);
+  vertical-align: 1px;
+}
+.board-score {
+  flex: none;
+  font-family: "Fraunces", serif;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
 
 /* ---------- Responsive ---------- */
 @media (max-width: 560px) {
-  .brand span:not(.brand-mark) { display: none; }
+  .brand-text { display: none; }
+  .player-chip { max-width: 56vw; }
   .legend { top: auto; bottom: calc(96px + env(safe-area-inset-bottom, 0px)); left: 16px; }
   .guess-capsule { width: calc(100vw - 24px); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
 }

@@ -1,29 +1,26 @@
 (function () {
   "use strict";
 
+  const api = window.HG_API;
+
   // ---------- State ----------
-  let streak = 0;
-  let bestStreak = Number(localStorage.getItem("hg_best") || 0);
-  let usedIndices = [];
-  let currentPerson = null;
-  let lifelineUsed = false;
+  let state = null; // today's run, as returned by the API
+  let names = [];
   let bornMarker, deathMarker;
-  let accepting = true;
+  let accepting = false;
+  let countdownTimer = null;
 
   // ---------- DOM ----------
   const streakNumEl = document.getElementById("streakNum");
+  const playerChip = document.getElementById("playerChip");
   const lifelineBtn = document.getElementById("lifelineBtn");
   const guessCapsule = document.getElementById("guessCapsule");
   const guessForm = document.getElementById("guessForm");
   const guessInput = document.getElementById("guessInput");
   const suggestionsEl = document.getElementById("suggestions");
   const feedbackEl = document.getElementById("feedback");
-  const overlay = document.getElementById("gameOverOverlay");
-  const overlayAnswer = document.getElementById("overlayAnswer");
-  const overlaySub = document.getElementById("overlaySub");
-  const finalStreakEl = document.getElementById("finalStreak");
-  const bestStreakEl = document.getElementById("bestStreak");
-  const playAgainBtn = document.getElementById("playAgainBtn");
+  const overlay = document.getElementById("dailyOverlay");
+  const card = document.getElementById("dailyCard");
 
   // ---------- Map ----------
   const map = L.map("map", {
@@ -99,43 +96,7 @@
 
   map.on("zoomend", layoutMarkers);
 
-  // ---------- Round flow ----------
-  function pickNextPerson() {
-    if (usedIndices.length >= PEOPLE.length) usedIndices = [];
-    let idx;
-    do {
-      idx = Math.floor(Math.random() * PEOPLE.length);
-    } while (usedIndices.includes(idx));
-    usedIndices.push(idx);
-    return PEOPLE[idx];
-  }
-
-  function startRound() {
-    accepting = true;
-    feedbackEl.textContent = "";
-    feedbackEl.className = "feedback";
-    guessInput.value = "";
-    guessInput.disabled = false;
-    hideSuggestions();
-
-    currentPerson = pickNextPerson();
-
-    if (bornMarker) map.removeLayer(bornMarker);
-    if (deathMarker) map.removeLayer(deathMarker);
-
-    const b = currentPerson.born;
-    const d = currentPerson.died;
-
-    bornMarker = L.marker([b.lat, b.lng], { icon: makeIcon(b.year, "born"), keyboard: false }).addTo(map);
-    deathMarker = L.marker([d.lat, d.lng], { icon: makeIcon(d.year, "died"), keyboard: false }).addTo(map);
-
-    const bounds = L.latLngBounds([[b.lat, b.lng], [d.lat, d.lng]]);
-    fitToBounds(bounds);
-    layoutMarkers();
-
-    guessInput.focus();
-  }
-
+  // ---------- Helpers ----------
   function fitToBounds(bounds) {
     const capsuleH = guessCapsule.offsetHeight + 48;
     map.fitBounds(bounds, {
@@ -158,49 +119,222 @@
       .trim();
   }
 
-  function endRun(correctAnswerShown) {
-    accepting = false;
-    guessInput.disabled = true;
-    if (streak > bestStreak) {
-      bestStreak = streak;
-      localStorage.setItem("hg_best", String(bestStreak));
-    }
-    overlayAnswer.textContent = currentPerson.name;
-    overlaySub.textContent = correctAnswerShown
-      ? `Born ${currentPerson.born.year} in ${currentPerson.born.place}, died ${currentPerson.died.year} in ${currentPerson.died.place}.`
-      : "";
-    finalStreakEl.textContent = String(streak);
-    bestStreakEl.textContent = String(bestStreak);
-    setTimeout(() => {
-      overlay.style.display = "flex";
-    }, 700);
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+    );
   }
 
-  function handleGuess(raw) {
-    if (!accepting || !raw.trim()) return;
-    const guess = normalize(raw);
-    const isCorrect = currentPerson.answers.some((a) => normalize(a) === guess);
+  function formatDay(day) {
+    return new Date(day + "T00:00:00Z").toLocaleDateString(undefined, {
+      weekday: "long", day: "numeric", month: "long", timeZone: "UTC",
+    });
+  }
 
-    if (isCorrect) {
-      streak += 1;
-      streakNumEl.textContent = String(streak);
+  // ---------- Rounds ----------
+  function showPerson(person) {
+    accepting = true;
+    guessInput.value = "";
+    guessInput.disabled = false;
+    lifelineBtn.disabled = state.hint_used;
+    hideSuggestions();
+
+    if (bornMarker) map.removeLayer(bornMarker);
+    if (deathMarker) map.removeLayer(deathMarker);
+
+    const b = person.born;
+    const d = person.died;
+    bornMarker = L.marker([b.lat, b.lng], { icon: makeIcon(b.year, "born"), keyboard: false }).addTo(map);
+    deathMarker = L.marker([d.lat, d.lng], { icon: makeIcon(d.year, "died"), keyboard: false }).addTo(map);
+
+    fitToBounds(L.latLngBounds([[b.lat, b.lng], [d.lat, d.lng]]));
+    layoutMarkers();
+
+    guessInput.focus();
+  }
+
+  function setScore(score, bump) {
+    streakNumEl.textContent = String(score);
+    if (bump) {
       streakNumEl.classList.add("bump");
       setTimeout(() => streakNumEl.classList.remove("bump"), 250);
+    }
+  }
 
-      feedbackEl.textContent = `${currentPerson.name} — correct.`;
+  function setPlaying(on) {
+    guessInput.disabled = !on;
+    lifelineBtn.disabled = !on || (state && state.hint_used);
+    if (!on) accepting = false;
+  }
+
+  function showError(err) {
+    feedbackEl.textContent = `Couldn't reach the game server — ${err.message}`;
+    feedbackEl.className = "feedback wrong";
+  }
+
+  async function handleGuess(raw) {
+    if (!accepting || !raw.trim()) return;
+    accepting = false;
+    guessInput.disabled = true;
+    hideSuggestions();
+
+    let res;
+    try {
+      res = await api.guess(raw);
+    } catch (err) {
+      showError(err);
+      accepting = true;
+      guessInput.disabled = false;
+      return;
+    }
+    state = res.state;
+
+    if (res.correct) {
+      setScore(state.score, true);
+      feedbackEl.textContent = `${res.answer.name} — correct.`;
       feedbackEl.className = "feedback correct";
-
       guessCapsule.classList.add("pulse-correct");
       setTimeout(() => guessCapsule.classList.remove("pulse-correct"), 550);
 
-      accepting = false;
-      guessInput.disabled = true;
-      setTimeout(startRound, 850);
+      if (state.status === "playing") {
+        setTimeout(() => {
+          feedbackEl.textContent = "";
+          feedbackEl.className = "feedback";
+          showPerson(state.person);
+        }, 850);
+      } else {
+        setTimeout(() => showCard({ answer: res.answer, perfect: true }), 900);
+      }
     } else {
       feedbackEl.textContent = "Not quite.";
       feedbackEl.className = "feedback wrong";
-      endRun(true);
+      setTimeout(() => showCard({ answer: res.answer }), 700);
     }
+  }
+
+  // ---------- Daily card ----------
+  function leaderboardHtml(rows) {
+    if (!api.online) {
+      return `<p class="board-note">Offline mode — connect Supabase in <code>config.js</code> to compete on a shared leaderboard.</p>`;
+    }
+    if (!rows.length) {
+      return `<p class="board-note">No one has played today yet. Be the first!</p>`;
+    }
+    return `<ol class="board">${rows.map((r) => `
+      <li class="${r.me ? "me" : ""}">
+        <span class="board-rank">${r.rank}</span>
+        <span class="board-name">${escapeHtml(r.username)}${r.me ? " <em>(you)</em>" : ""}</span>
+        ${r.playing ? `<span class="board-live" title="Still playing">playing</span>` : ""}
+        <span class="board-score">${r.score}</span>
+      </li>`).join("")}</ol>`;
+  }
+
+  function countdownText() {
+    const now = new Date();
+    const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+    const s = Math.max(0, Math.floor((next - now.getTime()) / 1000));
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
+  }
+
+  async function showCard(extra) {
+    extra = extra || {};
+    setPlaying(false);
+    clearInterval(countdownTimer);
+
+    let rows = [];
+    try {
+      rows = await api.leaderboard(10);
+    } catch (err) {
+      rows = null;
+    }
+    const board = rows === null
+      ? `<p class="board-note">Couldn't load the leaderboard.</p>`
+      : leaderboardHtml(rows);
+
+    const s = state;
+    let html = `<p class="card-eyebrow">Daily run · ${escapeHtml(formatDay(s.day))}</p>`;
+
+    if (s.status === "new") {
+      html += `
+        <p class="card-lead">For today's run your name is</p>
+        <div class="card-name">
+          <h1 id="cardName">${escapeHtml(s.username)}</h1>
+          <button class="reroll" id="rerollBtn" type="button" title="Pick another name" aria-label="Pick another name">↻</button>
+        </div>
+        <p class="card-rules">You get <strong>one run per day</strong>. Everyone gets the same people in the same order. Name as many as you can in a row; one wrong guess ends the run. One 💡 hint per run.</p>
+        <button class="primary-btn" id="startBtn" type="button">Start today's run</button>`;
+    } else if (s.status === "playing") {
+      html += `
+        <p class="card-lead">Your run is in progress</p>
+        <h1>${escapeHtml(s.username)}</h1>
+        <p class="card-rules">You're on <strong>${s.score}</strong> in a row. Pick up where you left off.</p>
+        <button class="primary-btn" id="startBtn" type="button">Resume run</button>`;
+    } else {
+      const a = extra.answer;
+      const st = s.standing || { rank: 1, players: 1 };
+      html += a
+        ? `<p class="card-lead ${extra.perfect ? "good" : "bad"}">${extra.perfect ? "Perfect run — you named everyone!" : "Run over — it was"}</p>
+           ${extra.perfect ? "" : `<h1>${escapeHtml(a.name)}</h1>
+           <p class="card-sub">Born ${a.born.year} in ${escapeHtml(a.born.place)}, died ${a.died.year} in ${escapeHtml(a.died.place)}.</p>`}`
+        : `<p class="card-lead">You've played today, ${escapeHtml(s.username)}</p>`;
+      html += `
+        <div class="card-stats">
+          <div><span class="card-stat-num">${s.score}</span><span class="card-stat-label">in a row</span></div>
+          ${api.online ? `<div><span class="card-stat-num">#${st.rank}</span><span class="card-stat-label">of ${st.players} today</span></div>` : ""}
+        </div>
+        <p class="card-next">Next run in <strong id="countdown">${countdownText()}</strong></p>`;
+    }
+
+    html += `<div class="card-board"><p class="board-title">Today's leaderboard</p>${board}</div>`;
+    card.innerHTML = html;
+    overlay.hidden = false;
+
+    const startBtn = document.getElementById("startBtn");
+    if (startBtn) startBtn.addEventListener("click", startRun);
+    const rerollBtn = document.getElementById("rerollBtn");
+    if (rerollBtn) rerollBtn.addEventListener("click", rerollName);
+    const cd = document.getElementById("countdown");
+    if (cd) {
+      countdownTimer = setInterval(() => {
+        cd.textContent = countdownText();
+        // A new day has started: fetch the new run.
+        if (cd.textContent === "00:00:00") setTimeout(boot, 1500);
+      }, 1000);
+    }
+  }
+
+  async function rerollName() {
+    const btn = document.getElementById("rerollBtn");
+    btn.disabled = true;
+    try {
+      state = await api.rerollName();
+      document.getElementById("cardName").textContent = state.username;
+      playerChip.textContent = state.username;
+    } catch (err) {
+      showError(err);
+    }
+    btn.disabled = false;
+  }
+
+  async function startRun() {
+    const btn = document.getElementById("startBtn");
+    btn.disabled = true;
+    try {
+      state = await api.start();
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = "Couldn't start — try again";
+      return;
+    }
+    overlay.hidden = true;
+    clearInterval(countdownTimer);
+    feedbackEl.textContent = "";
+    feedbackEl.className = "feedback";
+    setScore(state.score);
+    if (state.status === "playing") showPerson(state.person);
+    else showCard();
   }
 
   // ---------- Autocomplete ----------
@@ -212,13 +346,11 @@
   function showSuggestions(query) {
     const q = normalize(query);
     if (!q) return hideSuggestions();
-    const matches = PEOPLE
-      .filter((p) => normalize(p.name).includes(q))
-      .slice(0, 6);
+    const matches = names.filter((n) => normalize(n).includes(q)).slice(0, 6);
     if (!matches.length) return hideSuggestions();
 
     suggestionsEl.innerHTML = matches
-      .map((p) => `<div class="suggestion-item" data-name="${p.name}">${p.name}</div>`)
+      .map((n) => `<div class="suggestion-item" data-name="${escapeHtml(n)}">${escapeHtml(n)}</div>`)
       .join("");
     suggestionsEl.hidden = false;
   }
@@ -240,23 +372,19 @@
     handleGuess(guessInput.value);
   });
 
-  lifelineBtn.addEventListener("click", () => {
-    if (lifelineUsed || !accepting) return;
-    lifelineUsed = true;
+  lifelineBtn.addEventListener("click", async () => {
+    if (!accepting || state.hint_used) return;
     lifelineBtn.disabled = true;
-    feedbackEl.textContent = `💡 ${currentPerson.hint}`;
-    feedbackEl.className = "feedback hint";
+    try {
+      const hint = await api.hint();
+      state.hint_used = true;
+      feedbackEl.textContent = `💡 ${hint}`;
+      feedbackEl.className = "feedback hint";
+    } catch (err) {
+      lifelineBtn.disabled = false;
+      showError(err);
+    }
     guessInput.focus();
-  });
-
-  playAgainBtn.addEventListener("click", () => {
-    overlay.style.display = "none";
-    streak = 0;
-    streakNumEl.textContent = "0";
-    lifelineUsed = false;
-    lifelineBtn.disabled = false;
-    usedIndices = [];
-    startRound();
   });
 
   window.addEventListener("resize", () => {
@@ -268,5 +396,27 @@
   });
 
   // ---------- Boot ----------
-  startRound();
+  async function boot() {
+    setPlaying(false);
+    card.innerHTML = `<p class="card-lead">Loading today's run…</p>`;
+    overlay.hidden = false;
+    try {
+      [state, names] = await Promise.all([api.today(), names.length ? names : api.names()]);
+    } catch (err) {
+      card.innerHTML = `
+        <p class="card-lead bad">Couldn't reach the game server</p>
+        <p class="card-sub">${escapeHtml(err.message)}</p>
+        <button class="primary-btn" id="retryBtn" type="button">Try again</button>`;
+      document.getElementById("retryBtn").addEventListener("click", boot);
+      return;
+    }
+    playerChip.textContent = state.username;
+    playerChip.hidden = false;
+    setScore(state.score);
+    if (bornMarker) { map.removeLayer(bornMarker); bornMarker = null; }
+    if (deathMarker) { map.removeLayer(deathMarker); deathMarker = null; }
+    showCard();
+  }
+
+  boot();
 })();
