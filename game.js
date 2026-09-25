@@ -48,11 +48,16 @@
     }
   ).addTo(map);
 
+  // Years before 1 AD are stored as negative numbers.
+  function formatYear(year) {
+    return year < 0 ? `${-year} BC` : String(year);
+  }
+
   function makeIcon(year, kind) {
     return L.divIcon({
       className: "",
       html: `<div class="map-marker">
-               <div class="marker-year ${kind}">${year}</div>
+               <div class="marker-year ${kind}">${formatYear(year)}</div>
                <div class="marker-pin ${kind}"></div>
              </div>`,
       iconSize: [70, 56],
@@ -78,9 +83,12 @@
     const dx = pd.x - pb.x;
     const dy = pd.y - pb.y;
 
+    // Labels differ in width ("1889" vs "551 BC"): keep their centres far enough apart.
+    const gap = Math.max(LABEL_GAP,
+      (bornEl.querySelector(".marker-year").offsetWidth + diedEl.querySelector(".marker-year").offsetWidth) / 2 + 12);
     let shift = 0;
-    if (Math.abs(dx) < LABEL_GAP && Math.abs(dy) < LABEL_H) {
-      shift = (LABEL_GAP - Math.abs(dx)) / 2;
+    if (Math.abs(dx) < gap && Math.abs(dy) < LABEL_H) {
+      shift = (gap - Math.abs(dx)) / 2;
     }
     // Born goes to whichever side it already leans towards (left on a tie).
     const dir = dx >= 0 ? 1 : -1;
@@ -179,11 +187,7 @@
 
   async function handleGuess(raw) {
     if (!accepting || !raw.trim()) return;
-    if (normalize(raw).split(/\s+/).length < 2) {
-      feedbackEl.textContent = "Type both first and last name.";
-      feedbackEl.className = "feedback wrong";
-      return;
-    }
+    // (One-word guesses are handled by the server: some people only have one name.)
     accepting = false;
     guessInput.disabled = true;
 
@@ -298,7 +302,7 @@
       html += a
         ? `<p class="card-lead ${extra.perfect ? "good" : "bad"}">${extra.perfect ? "Perfect run — you named everyone!" : "Run over — it was"}</p>
            ${extra.perfect ? "" : `<h1>${escapeHtml(a.name)}</h1>
-           <p class="card-sub">Born ${a.born.year} in ${escapeHtml(a.born.place)}, died ${a.died.year} in ${escapeHtml(a.died.place)}.</p>`}`
+           <p class="card-sub">Born ${formatYear(a.born.year)} in ${escapeHtml(a.born.place)}, died ${formatYear(a.died.year)} in ${escapeHtml(a.died.place)}.</p>`}`
         : `<p class="card-lead">You've played today, ${escapeHtml(s.username)}</p>`;
       html += `
         <div class="card-stats">

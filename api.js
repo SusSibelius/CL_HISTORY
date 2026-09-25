@@ -92,36 +92,11 @@
     return h >>> 0;
   }
 
-  // Same typo rules as hg_private.answer_matches in supabase/schema.sql.
-  const words = (s) => s.split(/\s+/).filter(Boolean);
-
-  // Edit distance where swapping two neighbouring letters counts as one edit.
-  function typoDistance(a, b) {
-    const d = [];
-    for (let i = 0; i <= a.length; i++) d.push([i]);
-    for (let j = 0; j <= b.length; j++) d[0][j] = j;
-    for (let i = 1; i <= a.length; i++) {
-      for (let j = 1; j <= b.length; j++) {
-        d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-        if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
-          d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
-        }
-      }
-    }
-    return d[a.length][b.length];
-  }
-
-  function answerMatches(g, a) {
-    if (!g) return false;
-    const gw = words(g), aw = words(a);
-    if (gw.length === aw.length) {
-      return aw.every((w, i) => typoDistance(gw[i], w) <= (w.length <= 2 ? 0 : w.length <= 6 ? 1 : 2));
-    }
-    return typoDistance(g.replace(/ /g, ""), a.replace(/ /g, "")) <= 1;
-  }
+  // Guess matching rules are shared with the scripts (match.js).
+  const { normalize: norm, words, answerMatches } = window.HG_MATCH;
 
   function localApi() {
-    const ready = loadScript("data.js?v=8");
+    const ready = loadScript("data.js?v=10");
     const todayKey = () => new Date().toISOString().slice(0, 10); // UTC day, like the server
 
     function load() {
@@ -137,8 +112,17 @@
     }
     function save(run) { storageSet("hg_run", JSON.stringify(run)); }
 
+    // Famous people first, with a daily nudge — like hg_private.person_at.
+    // (data.js is sorted most famous first.)
+    const orderCache = {};
     function order(day) {
-      return PEOPLE.slice().sort((a, b) => hash(day + ":" + a.name) - hash(day + ":" + b.name));
+      if (!orderCache[day]) {
+        orderCache[day] = PEOPLE
+          .map((p, i) => ({ p, key: Math.log(i + 21) + 2.4 * (hash(day + ":" + p.name) / 4294967296 - 0.5) }))
+          .sort((x, y) => x.key - y.key)
+          .map((x) => x.p);
+      }
+      return orderCache[day];
     }
     function current(run) { return order(run.day)[run.score]; }
 
@@ -159,9 +143,6 @@
         standing: status === "new" ? null : { rank: 1, players: 1 },
       };
     }
-
-    const norm = (s) => String(s || "").toLowerCase().normalize("NFD")
-      .replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9\s]/g, "").trim();
 
     return {
       online: false,
