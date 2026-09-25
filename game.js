@@ -65,6 +65,40 @@
     });
   }
 
+  // Keep both markers readable when born/died are close together on screen:
+  // spread the year labels apart sideways, and merge the pins into one
+  // two-tone pin when they would sit on top of each other.
+  const LABEL_GAP = 62; // px between label centres (labels are ~50px wide)
+  const LABEL_H = 30;
+  const PIN_MERGE = 12;
+
+  function layoutMarkers() {
+    if (!bornMarker || !deathMarker) return;
+    const bornEl = bornMarker.getElement();
+    const diedEl = deathMarker.getElement();
+    if (!bornEl || !diedEl) return;
+
+    const pb = map.latLngToLayerPoint(bornMarker.getLatLng());
+    const pd = map.latLngToLayerPoint(deathMarker.getLatLng());
+    const dx = pd.x - pb.x;
+    const dy = pd.y - pb.y;
+
+    let shift = 0;
+    if (Math.abs(dx) < LABEL_GAP && Math.abs(dy) < LABEL_H) {
+      shift = (LABEL_GAP - Math.abs(dx)) / 2;
+    }
+    // Born goes to whichever side it already leans towards (left on a tie).
+    const dir = dx >= 0 ? 1 : -1;
+    bornEl.querySelector(".marker-year").style.transform = `translateX(${-dir * shift}px)`;
+    diedEl.querySelector(".marker-year").style.transform = `translateX(${dir * shift}px)`;
+
+    const merge = Math.hypot(dx, dy) < PIN_MERGE;
+    bornEl.querySelector(".marker-pin").classList.toggle("hidden", merge);
+    diedEl.querySelector(".marker-pin").classList.toggle("shared", merge);
+  }
+
+  map.on("zoomend", layoutMarkers);
+
   // ---------- Round flow ----------
   function pickNextPerson() {
     if (usedIndices.length >= PEOPLE.length) usedIndices = [];
@@ -97,6 +131,7 @@
 
     const bounds = L.latLngBounds([[b.lat, b.lng], [d.lat, d.lng]]);
     fitToBounds(bounds);
+    layoutMarkers();
 
     guessInput.focus();
   }
@@ -228,6 +263,7 @@
     map.invalidateSize();
     if (bornMarker && deathMarker) {
       fitToBounds(L.latLngBounds([bornMarker.getLatLng(), deathMarker.getLatLng()]));
+      layoutMarkers();
     }
   });
 

@@ -145,6 +145,7 @@ html, body {
   box-shadow: 0 4px 10px rgba(34, 38, 43, 0.25);
   margin-bottom: 3px;
 }
+.marker-year { transition: transform 0.2s ease; }
 .marker-year.born { background: var(--born); }
 .marker-year.died { background: var(--died); }
 .marker-pin {
@@ -157,6 +158,9 @@ html, body {
 }
 .marker-pin.born { background: var(--born); }
 .marker-pin.died { background: var(--died); }
+.marker-pin.hidden { visibility: hidden; }
+/* Born and died at (almost) the same spot: one pin, half of each colour. */
+.marker-pin.shared { background: linear-gradient(135deg, var(--born) 50%, var(--died) 50%); }
 
 /* ---------- Guess capsule ---------- */
 .guess-capsule {
