@@ -20,15 +20,21 @@
 html, body {
   height: 100%;
   margin: 0;
+  overflow: hidden;
   background: var(--paper);
   color: var(--ink);
   font-family: "Inter", system-ui, sans-serif;
   overscroll-behavior: none;
 }
 
+/* --vv-top / --vv-height / --keyboard: the part of the screen not covered by
+   the on-screen keyboard (set by game.js). */
 #map {
   position: fixed;
-  inset: 0;
+  left: 0;
+  right: 0;
+  top: var(--vv-top, 0px);
+  height: var(--vv-height, 100%);
   background: var(--paper);
 }
 
@@ -42,7 +48,7 @@ html, body {
 /* ---------- Top bar ---------- */
 .topbar {
   position: fixed;
-  top: 0;
+  top: var(--vv-top, 0px);
   left: 0;
   right: 0;
   z-index: 500;
@@ -181,7 +187,7 @@ html, body {
 .guess-capsule {
   position: fixed;
   left: 50%;
-  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(var(--keyboard, 0px) + 24px + env(safe-area-inset-bottom, 0px));
   transform: translateX(-50%);
   z-index: 500;
   width: min(440px, calc(100vw - 32px));
@@ -499,7 +505,10 @@ label.card-lead { display: block; }
   .brand-text { display: none; }
   .player-chip { max-width: 56vw; }
   .legend { top: auto; bottom: calc(96px + env(safe-area-inset-bottom, 0px)); left: 16px; }
-  .guess-capsule { width: calc(100vw - 24px); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+  .guess-capsule { width: calc(100vw - 24px); bottom: calc(var(--keyboard, 0px) + 16px + env(safe-area-inset-bottom, 0px)); }
+  /* While typing: more room for the map. */
+  .keyboard-open .legend { display: none; }
+  .keyboard-open .guess-capsule { bottom: calc(var(--keyboard, 0px) + 8px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
