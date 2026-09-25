@@ -27,7 +27,7 @@ The site itself is fully static. The shared leaderboard needs a free Supabase pr
 
 It's a **daily challenge**: everyone gets one run per day with the same people in the same order, and competes on a shared leaderboard.
 
-- Before your run you pick the name you'll appear under on the leaderboard: type your own, or take a generated one (e.g. *Curious Cartographer 42*, ↻ for another). Names are 2–24 characters and unique per day. A name you typed is remembered for the next days. No login needed.
+- Before your run you type the name you'll appear under on the leaderboard. Names are 2–24 characters (Latin letters incl. accents, numbers, spaces and `. _ ' -`), unique per day, and checked against a word filter. Your name is remembered for the next days. No login needed.
 - Each round shows one person's birth pin (teal) and death pin (plum), labeled with the year. Type who it is. A correct guess moves you to the next person; one wrong guess ends the run and reveals the answer.
 - One 💡 hint per run reveals a short description of the current person.
 - After the run you see your score, your rank today, the leaderboard and a countdown to the next run. Days change at midnight UTC.
@@ -47,6 +47,20 @@ The anon key is designed to be public. The database only lets it call the game's
 ### Updating the database
 
 When `supabase/schema.sql` changes (new features), paste the whole file into the SQL Editor again and run it. It's safe to re-run: it keeps all runs and scores.
+
+### Moderating names
+
+Vulgar and offensive names are rejected by a word filter in the database (`hg_private.name_filter`, see `schema.sql`). It also catches split-up (`f.u.c.k`), stretched (`fuuuck`) and number-for-letter (`sh1t`) spellings. To block another word, run in the SQL Editor:
+
+```sql
+insert into hg_private.name_filter (word, whole_word) values ('someword', false);
+```
+
+Use `whole_word = true` for short words that appear inside ordinary names (like "ass" in Cassandra), so they're only blocked on their own. To remove a name that already got through from today's leaderboard:
+
+```sql
+update public.runs set username = 'Removed' where day = current_date and username ilike 'the name';
+```
 
 ## Adding people
 

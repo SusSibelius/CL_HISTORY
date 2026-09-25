@@ -9,7 +9,6 @@
   let bornMarker, deathMarker;
   let accepting = false;
   let countdownTimer = null;
-  let nameEdited = false; // the player typed their own name (vs. a suggestion)
 
   // ---------- DOM ----------
   const streakNumEl = document.getElementById("streakNum");
@@ -258,12 +257,15 @@
     let html = `<p class="card-eyebrow">Daily run · ${escapeHtml(formatDay(s.day))}</p>`;
 
     if (s.status === "new") {
+      setTimeout(() => {
+        const input = document.getElementById("nameInput");
+        if (input && !input.value) input.focus();
+      }, 50);
       html += `
         <label class="card-lead" for="nameInput">Choose your name for today's run</label>
         <div class="card-name">
           <input class="name-input" id="nameInput" type="text" maxlength="24" autocomplete="nickname"
-                 spellcheck="false" value="${escapeHtml(savedName() || s.username)}" />
-          <button class="reroll" id="rerollBtn" type="button" title="Suggest a random name" aria-label="Suggest a random name">↻</button>
+                 spellcheck="false" placeholder="Your name" value="${escapeHtml(s.username || savedName())}" />
         </div>
         <p class="name-error" id="nameError" role="alert"></p>
         <p class="card-rules">You get <strong>one run per day</strong>. Everyone gets the same people in the same order. Name as many as you can in a row; one wrong guess ends the run. One 💡 hint per run.</p>
@@ -296,13 +298,9 @@
 
     const startBtn = document.getElementById("startBtn");
     if (startBtn) startBtn.addEventListener("click", startRun);
-    const rerollBtn = document.getElementById("rerollBtn");
-    if (rerollBtn) rerollBtn.addEventListener("click", rerollName);
     const nameInput = document.getElementById("nameInput");
     if (nameInput) {
-      nameEdited = Boolean(savedName());
       nameInput.addEventListener("input", () => {
-        nameEdited = true;
         document.getElementById("nameError").textContent = "";
       });
       nameInput.addEventListener("keydown", (e) => {
@@ -319,27 +317,12 @@
     }
   }
 
-  // A name the player typed themselves is remembered for the next days.
+  // The player's name is remembered for the next days.
   function savedName() {
     try { return localStorage.getItem("hg_name") || ""; } catch (e) { return ""; }
   }
   function saveName(name) {
     try { localStorage.setItem("hg_name", name); } catch (e) { /* private mode etc. */ }
-  }
-
-  async function rerollName() {
-    const btn = document.getElementById("rerollBtn");
-    const errorEl = document.getElementById("nameError");
-    btn.disabled = true;
-    try {
-      state = await api.rerollName();
-      document.getElementById("nameInput").value = state.username;
-      nameEdited = false;
-      errorEl.textContent = "";
-    } catch (err) {
-      errorEl.textContent = err.message;
-    }
-    btn.disabled = false;
   }
 
   async function startRun() {
@@ -352,7 +335,7 @@
       const errorEl = document.getElementById("nameError");
       const name = window.HG_cleanName(nameInput.value);
       if (!window.HG_validName(name)) {
-        errorEl.textContent = window.HG_NAME_RULES;
+        errorEl.textContent = name ? window.HG_NAME_RULES : "Choose a name to start";
         btn.disabled = false;
         nameInput.focus();
         return;
@@ -367,7 +350,7 @@
           return;
         }
       }
-      if (nameEdited) saveName(state.username);
+      saveName(state.username);
       playerChip.textContent = state.username;
       playerChip.hidden = false;
     }

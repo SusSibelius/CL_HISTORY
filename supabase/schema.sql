@@ -30,8 +30,8 @@ create table if not exists public.people (
   died_place  text    not null
 );
 
--- One row per device per day. It is created (with a generated username) when
--- the player first opens the game that day, and becomes a run when started.
+-- One row per device per day. It is created when the player first opens the
+-- game that day, gets the name the player picks, and becomes a run when started.
 create table if not exists public.runs (
   id           uuid primary key default extensions.gen_random_uuid(),
   day          date not null,
@@ -44,6 +44,44 @@ create table if not exists public.runs (
   unique (day, device_id)
 );
 create index if not exists runs_day_score on public.runs (day, score desc);
+-- Players choose their own name before starting, so it is empty until then.
+alter table public.runs alter column username drop not null;
+
+-- Words that aren't allowed in player names. Add your own any time:
+--   insert into hg_private.name_filter (word, whole_word) values ('example', true);
+-- whole_word = false: blocked anywhere in the name, even run together with
+--   other words or split up ("f.u.c.k", "fuuuck", "f4ck" are caught too).
+-- whole_word = true: only blocked as a word of its own (plus plural -s/-es),
+--   for short words hiding inside ordinary names (Cassandra, Essex, Dickens).
+create table if not exists hg_private.name_filter (
+  word        text primary key check (word ~ '^[a-z]+$'),
+  whole_word  boolean not null default false
+);
+alter table hg_private.name_filter enable row level security;
+
+insert into hg_private.name_filter (word, whole_word) values
+  -- English, blocked anywhere
+  ('fuck', false), ('cunt', false), ('nigger', false), ('nigga', false), ('faggot', false),
+  ('whore', false), ('slut', false), ('bitch', false), ('hitler', false), ('pedophile', false),
+  ('paedophile', false), ('dildo', false), ('blowjob', false), ('handjob', false), ('jizz', false),
+  ('wank', false), ('retard', false), ('porn', false), ('asshole', false), ('arsehole', false),
+  ('bastard', false), ('shit', false), ('vagina', false), ('pussy', false), ('penis', false),
+  ('boner', false), ('twat', false), ('bollock', false), ('motherf', false), ('molest', false),
+  ('heilhitler', false), ('siegheil', false), ('killyourself', false), ('kys', true),
+  ('phuck', false), ('fcuk', false), ('fvck', false), ('fuk', true), ('fck', true), ('stfu', true),
+  -- English, whole word only
+  ('ass', true), ('arse', true), ('anal', true), ('anus', true), ('dick', true), ('cock', true),
+  ('cum', true), ('tit', true), ('tits', true), ('sex', true), ('sexy', true), ('rape', true),
+  ('rapist', true), ('pedo', true), ('paedo', true), ('nazi', true), ('fag', true), ('piss', true),
+  ('kkk', true), ('nsfw', true), ('xxx', true), ('milf', true), ('horny', true), ('nude', true),
+  ('nudes', true), ('hoe', true), ('negro', true), ('coon', true), ('spic', true), ('chink', true),
+  ('kike', true), ('wetback', true), ('tranny', true),
+  -- Swedish, blocked anywhere
+  ('fitta', false), ('knull', false), ('runka', false), ('kuksug', false), ('horunge', false),
+  ('javla', false), ('neger', false), ('subba', false), ('slyna', false),
+  -- Swedish, whole word only
+  ('hora', true), ('kuk', true), ('porr', true), ('bog', true), ('mongo', true), ('cp', true)
+on conflict (word) do nothing;
 
 alter table public.people enable row level security;
 alter table public.runs   enable row level security;
@@ -90,14 +128,36 @@ language sql stable as $$
   )
 $$;
 
-create or replace function hg_private.random_name() returns text
-language sql volatile as $$
-  select (array['Curious','Bold','Wandering','Quiet','Brave','Clever','Swift','Patient',
-                'Lucky','Keen','Gentle','Restless','Sharp','Humble','Daring','Merry'])[1 + floor(random() * 16)::int]
-      || ' ' ||
-         (array['Cartographer','Archivist','Chronicler','Navigator','Scribe','Explorer','Historian','Pilgrim',
-                'Voyager','Scholar','Herald','Alchemist','Astronomer','Wanderer','Curator','Bard'])[1 + floor(random() * 16)::int]
-      || ' ' || (10 + floor(random() * 90)::int)::text
+drop function if exists hg_private.random_name();
+
+-- True if the name contains a word from hg_private.name_filter. Checks the name
+-- with accents removed and digits read as letters (0→o, 1→i or l, 3→e, 4→a,
+-- 5→s, 7→t, 8→b), and tolerates repeated letters ("fuuuck").
+create or replace function hg_private.name_blocked(p_name text) returns boolean
+language plpgsql stable as $$
+declare
+  base text := lower(extensions.unaccent(coalesce(p_name, '')));
+  v text;
+  squashed text;
+  f record;
+  pat text;
+begin
+  foreach v in array array[translate(base, '0134578', 'oieastb'), translate(base, '0134578', 'oleastb')] loop
+    squashed := regexp_replace(v, '[^a-z]', '', 'g');
+    for f in select word, whole_word from hg_private.name_filter loop
+      pat := regexp_replace(f.word, '(.)', '\1+', 'g');
+      if f.whole_word then
+        pat := '^' || pat || '(e?s)?$';
+        if squashed ~ pat or exists (select 1 from regexp_split_to_table(v, '[^a-z]+') t where t ~ pat) then
+          return true;
+        end if;
+      elsif squashed ~ pat then
+        return true;
+      end if;
+    end loop;
+  end loop;
+  return false;
+end
 $$;
 
 -- Rank among everyone who has started a run that day (1 = best).
@@ -144,35 +204,25 @@ $$;
 
 -- ---------- Public API (called by the browser) ----------
 
--- Today's state for this device; creates today's row with a username if needed.
+-- Today's state for this device; creates today's (still nameless) row if needed.
 create or replace function public.hg_today(p_device uuid) returns json
 language plpgsql volatile security definer set search_path = public, pg_temp as $$
 declare r public.runs;
 begin
   if p_device is null then raise exception 'device required'; end if;
-  insert into public.runs (day, device_id, username)
-  values (hg_private.today(), p_device, hg_private.random_name())
+  insert into public.runs (day, device_id)
+  values (hg_private.today(), p_device)
   on conflict (day, device_id) do nothing;
   select * into r from public.runs where day = hg_private.today() and device_id = p_device;
   return hg_private.state(r);
 end
 $$;
 
--- Pick another username; only allowed before today's run has started.
-create or replace function public.hg_reroll_name(p_device uuid) returns json
-language plpgsql volatile security definer set search_path = public, pg_temp as $$
-declare r public.runs;
-begin
-  update public.runs set username = hg_private.random_name()
-  where day = hg_private.today() and device_id = p_device and started_at is null
-  returning * into r;
-  if r.id is null then raise exception 'run already started'; end if;
-  return hg_private.state(r);
-end
-$$;
+drop function if exists public.hg_reroll_name(uuid);
 
--- Let the player choose their own name; only allowed before today's run has
--- started. Names are unique per day (ignoring case).
+-- The player picks their name; only allowed before today's run has started.
+-- Names are Latin letters (accents are fine), unique per day ignoring case, and
+-- must pass the word filter.
 create or replace function public.hg_set_name(p_device uuid, p_name text) returns json
 language plpgsql volatile security definer set search_path = public, pg_temp as $$
 declare
@@ -180,8 +230,11 @@ declare
   n text := regexp_replace(trim(coalesce(p_name, '')), '\s+', ' ', 'g');
 begin
   if char_length(n) < 2 or char_length(n) > 24
-     or n !~ '^[[:alnum:] ._''-]+$' or n !~ '[[:alnum:]]' then
+     or lower(extensions.unaccent(n)) !~ '^[a-z0-9 ._''-]+$' or n !~ '[[:alnum:]]' then
     raise exception 'Use 2–24 characters: letters, numbers, spaces and . _ '' -';
+  end if;
+  if hg_private.name_blocked(n) then
+    raise exception 'That name isn''t allowed — please choose another';
   end if;
   perform public.hg_today(p_device);
   if exists (select 1 from public.runs
@@ -201,6 +254,10 @@ language plpgsql volatile security definer set search_path = public, pg_temp as 
 declare r public.runs;
 begin
   perform public.hg_today(p_device);
+  if exists (select 1 from public.runs where day = hg_private.today() and device_id = p_device
+             and started_at is null and username is null) then
+    raise exception 'Choose a name first';
+  end if;
   update public.runs set started_at = now()
   where day = hg_private.today() and device_id = p_device and started_at is null;
   select * into r from public.runs where day = hg_private.today() and device_id = p_device;
@@ -279,7 +336,7 @@ $$;
 revoke all on all functions in schema hg_private from public, anon, authenticated;
 revoke usage on schema hg_private from public, anon, authenticated;
 grant execute on function
-  public.hg_today(uuid), public.hg_reroll_name(uuid), public.hg_set_name(uuid, text), public.hg_start(uuid),
+  public.hg_today(uuid), public.hg_set_name(uuid, text), public.hg_start(uuid),
   public.hg_guess(uuid, text), public.hg_hint(uuid),
   public.hg_leaderboard(uuid, int), public.hg_names()
 to anon, authenticated;
