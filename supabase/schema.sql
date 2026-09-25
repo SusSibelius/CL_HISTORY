@@ -171,6 +171,31 @@ begin
 end
 $$;
 
+-- Let the player choose their own name; only allowed before today's run has
+-- started. Names are unique per day (ignoring case).
+create or replace function public.hg_set_name(p_device uuid, p_name text) returns json
+language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare
+  r public.runs;
+  n text := regexp_replace(trim(coalesce(p_name, '')), '\s+', ' ', 'g');
+begin
+  if char_length(n) < 2 or char_length(n) > 24
+     or n !~ '^[[:alnum:] ._''-]+$' or n !~ '[[:alnum:]]' then
+    raise exception 'Use 2–24 characters: letters, numbers, spaces and . _ '' -';
+  end if;
+  perform public.hg_today(p_device);
+  if exists (select 1 from public.runs
+             where day = hg_private.today() and device_id <> p_device and lower(username) = lower(n)) then
+    raise exception 'Someone already has that name today — try another';
+  end if;
+  update public.runs set username = n
+  where day = hg_private.today() and device_id = p_device and started_at is null
+  returning * into r;
+  if r.id is null then raise exception 'run already started'; end if;
+  return hg_private.state(r);
+end
+$$;
+
 create or replace function public.hg_start(p_device uuid) returns json
 language plpgsql volatile security definer set search_path = public, pg_temp as $$
 declare r public.runs;
@@ -254,7 +279,7 @@ $$;
 revoke all on all functions in schema hg_private from public, anon, authenticated;
 revoke usage on schema hg_private from public, anon, authenticated;
 grant execute on function
-  public.hg_today(uuid), public.hg_reroll_name(uuid), public.hg_start(uuid),
+  public.hg_today(uuid), public.hg_reroll_name(uuid), public.hg_set_name(uuid, text), public.hg_start(uuid),
   public.hg_guess(uuid, text), public.hg_hint(uuid),
   public.hg_leaderboard(uuid, int), public.hg_names()
 to anon, authenticated;

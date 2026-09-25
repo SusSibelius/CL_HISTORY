@@ -55,6 +55,7 @@
       online: true,
       today: () => rpc("hg_today", { p_device: device }),
       rerollName: () => rpc("hg_reroll_name", { p_device: device }),
+      setName: (name) => rpc("hg_set_name", { p_device: device, p_name: name }),
       start: () => rpc("hg_start", { p_device: device }),
       guess: (text) => rpc("hg_guess", { p_device: device, p_guess: text }),
       hint: () => rpc("hg_hint", { p_device: device }).then((r) => r.hint),
@@ -62,6 +63,14 @@
       names: () => rpc("hg_names"),
     };
   }
+
+  // ---------- Player-chosen names ----------
+  // Same rules as hg_set_name in supabase/schema.sql.
+  const NAME_RULES = "Use 2–24 characters: letters, numbers, spaces and . _ ' -";
+  window.HG_NAME_RULES = NAME_RULES;
+  window.HG_cleanName = (name) => String(name || "").normalize("NFC").trim().replace(/\s+/g, " ");
+  window.HG_validName = (n) =>
+    n.length >= 2 && n.length <= 24 && /^[\p{L}\p{N} ._'-]+$/u.test(n) && /[\p{L}\p{N}]/u.test(n);
 
   // ---------- Offline (local, from data.js) ----------
   const ADJECTIVES = ["Curious", "Bold", "Wandering", "Quiet", "Brave", "Clever", "Swift", "Patient",
@@ -91,7 +100,7 @@
   }
 
   function localApi() {
-    const ready = loadScript("data.js?v=4");
+    const ready = loadScript("data.js?v=6");
     const todayKey = () => new Date().toISOString().slice(0, 10); // UTC day, like the server
 
     function load() {
@@ -141,6 +150,16 @@
         const run = load();
         if (run.started) throw new Error("run already started");
         run.username = randomName();
+        save(run);
+        return state(run);
+      },
+      setName: async (name) => {
+        await ready;
+        const run = load();
+        if (run.started) throw new Error("run already started");
+        const n = window.HG_cleanName(name);
+        if (!window.HG_validName(n)) throw new Error(NAME_RULES);
+        run.username = n;
         save(run);
         return state(run);
       },

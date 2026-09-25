@@ -27,7 +27,7 @@ The site itself is fully static. The shared leaderboard needs a free Supabase pr
 
 It's a **daily challenge**: everyone gets one run per day with the same people in the same order, and competes on a shared leaderboard.
 
-- When you open the game you get a generated name for today's run (e.g. *Curious Cartographer 42*). You can re-roll it until you start. No login needed.
+- Before your run you pick the name you'll appear under on the leaderboard: type your own, or take a generated one (e.g. *Curious Cartographer 42*, ↻ for another). Names are 2–24 characters and unique per day. A name you typed is remembered for the next days. No login needed.
 - Each round shows one person's birth pin (teal) and death pin (plum), labeled with the year. Type who it is. A correct guess moves you to the next person; one wrong guess ends the run and reveals the answer.
 - One 💡 hint per run reveals a short description of the current person.
 - After the run you see your score, your rank today, the leaderboard and a countdown to the next run. Days change at midnight UTC.
@@ -43,6 +43,10 @@ Without this the game runs in **offline mode**: same daily rules, but scores sta
 4. Commit and push. The page now uses the shared leaderboard.
 
 The anon key is designed to be public. The database only lets it call the game's functions: the browser never receives the answers, and scores are recorded by the server as you guess, so a score can't just be sent in.
+
+### Updating the database
+
+When `supabase/schema.sql` changes (new features), paste the whole file into the SQL Editor again and run it. It's safe to re-run: it keeps all runs and scores.
 
 ## Adding people
 

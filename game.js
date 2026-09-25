@@ -9,6 +9,7 @@
   let bornMarker, deathMarker;
   let accepting = false;
   let countdownTimer = null;
+  let nameEdited = false; // the player typed their own name (vs. a suggestion)
 
   // ---------- DOM ----------
   const streakNumEl = document.getElementById("streakNum");
@@ -258,11 +259,13 @@
 
     if (s.status === "new") {
       html += `
-        <p class="card-lead">For today's run your name is</p>
+        <label class="card-lead" for="nameInput">Choose your name for today's run</label>
         <div class="card-name">
-          <h1 id="cardName">${escapeHtml(s.username)}</h1>
-          <button class="reroll" id="rerollBtn" type="button" title="Pick another name" aria-label="Pick another name">↻</button>
+          <input class="name-input" id="nameInput" type="text" maxlength="24" autocomplete="nickname"
+                 spellcheck="false" value="${escapeHtml(savedName() || s.username)}" />
+          <button class="reroll" id="rerollBtn" type="button" title="Suggest a random name" aria-label="Suggest a random name">↻</button>
         </div>
+        <p class="name-error" id="nameError" role="alert"></p>
         <p class="card-rules">You get <strong>one run per day</strong>. Everyone gets the same people in the same order. Name as many as you can in a row; one wrong guess ends the run. One 💡 hint per run.</p>
         <button class="primary-btn" id="startBtn" type="button">Start today's run</button>`;
     } else if (s.status === "playing") {
@@ -295,6 +298,17 @@
     if (startBtn) startBtn.addEventListener("click", startRun);
     const rerollBtn = document.getElementById("rerollBtn");
     if (rerollBtn) rerollBtn.addEventListener("click", rerollName);
+    const nameInput = document.getElementById("nameInput");
+    if (nameInput) {
+      nameEdited = Boolean(savedName());
+      nameInput.addEventListener("input", () => {
+        nameEdited = true;
+        document.getElementById("nameError").textContent = "";
+      });
+      nameInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") startRun();
+      });
+    }
     const cd = document.getElementById("countdown");
     if (cd) {
       countdownTimer = setInterval(() => {
@@ -305,22 +319,59 @@
     }
   }
 
+  // A name the player typed themselves is remembered for the next days.
+  function savedName() {
+    try { return localStorage.getItem("hg_name") || ""; } catch (e) { return ""; }
+  }
+  function saveName(name) {
+    try { localStorage.setItem("hg_name", name); } catch (e) { /* private mode etc. */ }
+  }
+
   async function rerollName() {
     const btn = document.getElementById("rerollBtn");
+    const errorEl = document.getElementById("nameError");
     btn.disabled = true;
     try {
       state = await api.rerollName();
-      document.getElementById("cardName").textContent = state.username;
-      playerChip.textContent = state.username;
+      document.getElementById("nameInput").value = state.username;
+      nameEdited = false;
+      errorEl.textContent = "";
     } catch (err) {
-      showError(err);
+      errorEl.textContent = err.message;
     }
     btn.disabled = false;
   }
 
   async function startRun() {
     const btn = document.getElementById("startBtn");
+    if (btn.disabled) return;
     btn.disabled = true;
+
+    const nameInput = document.getElementById("nameInput");
+    if (nameInput) {
+      const errorEl = document.getElementById("nameError");
+      const name = window.HG_cleanName(nameInput.value);
+      if (!window.HG_validName(name)) {
+        errorEl.textContent = window.HG_NAME_RULES;
+        btn.disabled = false;
+        nameInput.focus();
+        return;
+      }
+      if (name !== state.username) {
+        try {
+          state = await api.setName(name);
+        } catch (err) {
+          errorEl.textContent = err.message;
+          btn.disabled = false;
+          nameInput.focus();
+          return;
+        }
+      }
+      if (nameEdited) saveName(state.username);
+      playerChip.textContent = state.username;
+      playerChip.hidden = false;
+    }
+
     try {
       state = await api.start();
     } catch (err) {
@@ -411,7 +462,7 @@
       return;
     }
     playerChip.textContent = state.username;
-    playerChip.hidden = false;
+    playerChip.hidden = state.status === "new"; // shown once the name is locked in
     setScore(state.score);
     if (bornMarker) { map.removeLayer(bornMarker); bornMarker = null; }
     if (deathMarker) { map.removeLayer(deathMarker); deathMarker = null; }

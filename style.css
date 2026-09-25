@@ -364,6 +364,30 @@ html, body {
   justify-content: center;
   gap: 8px;
 }
+.name-input {
+  min-width: 0;
+  flex: 1;
+  border: none;
+  border-bottom: 2px solid rgba(34, 38, 43, 0.15);
+  background: transparent;
+  padding: 2px 4px 4px;
+  margin-bottom: 6px;
+  font-family: "Fraunces", serif;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--ink);
+  text-align: center;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.name-input:focus { border-bottom-color: var(--accent); }
+.name-error {
+  min-height: 18px;
+  margin: 4px 0 0 0;
+  font-size: 13px;
+  color: var(--wrong);
+}
+label.card-lead { display: block; }
 .reroll {
   flex: none;
   width: 32px;
