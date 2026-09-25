@@ -5,6 +5,6 @@
 //
 // Leave them empty to play offline: same daily rules, but no leaderboard.
 window.HG_CONFIG = {
-  supabaseUrl: "",
-  supabaseAnonKey: "",
+  supabaseUrl: "https://lpsadlmektsudiqefodz.supabase.co",
+  supabaseAnonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxwc2FkbG1la3RzdWRpcWVmb2R6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAzMzgzMTEsImV4cCI6MjEwNTkxNDMxMX0.p0_UeqmYLB8DT5utIPL5CsOw8G3ruM4XLuwx9IJ6uv0",
 };
