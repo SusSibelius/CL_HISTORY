@@ -19,6 +19,9 @@
   const feedbackEl = document.getElementById("feedback");
   const overlay = document.getElementById("dailyOverlay");
   const card = document.getElementById("dailyCard");
+  const mapEl = document.getElementById("map");
+  const topbarEl = document.querySelector(".topbar");
+  const legendEl = document.querySelector(".legend");
 
   // ---------- Map ----------
   const map = L.map("map", {
@@ -103,12 +106,33 @@
   map.on("zoomend", layoutMarkers);
 
   // ---------- Helpers ----------
+  // Fit both pins into the part of the map that's actually visible: below the
+  // top bar (and the legend on desktop), above the guess box (and the keyboard
+  // on phones). Measured from the page, so it adapts when the keyboard opens.
+  const LABEL_ROOM = 48; // the year label sits above the pin
   function fitToBounds(bounds) {
-    const capsuleH = guessCapsule.offsetHeight + 48;
+    const mapRect = mapEl.getBoundingClientRect();
+    const mid = mapRect.top + mapRect.height / 2;
+    let top = topbarEl.getBoundingClientRect().bottom;
+    let bottom = guessCapsule.getBoundingClientRect().top;
+    const legend = legendEl.getBoundingClientRect();
+    if (legend.height && getComputedStyle(legendEl).display !== "none") {
+      if (legend.bottom < mid) top = Math.max(top, legend.bottom);
+      else bottom = Math.min(bottom, legend.top);
+    }
+    let padTop = Math.max(0, top - mapRect.top) + LABEL_ROOM;
+    let padBottom = Math.max(0, mapRect.bottom - bottom) + 12;
+    // Very little room (small phone with the keyboard open): keep what we can.
+    if (mapRect.height - padTop - padBottom < 60) {
+      padTop = Math.max(0, top - mapRect.top) + 32;
+      padBottom = Math.max(0, mapRect.bottom - bottom) + 4;
+    }
+    const side = mapRect.width < 500 ? 28 : 40;
     map.fitBounds(bounds, {
-      paddingTopLeft: [40, 110],
-      paddingBottomRight: [40, Math.max(capsuleH, 140)],
+      paddingTopLeft: [side, padTop],
+      paddingBottomRight: [side, padBottom],
       maxZoom: 6,
+      animate: false,
     });
     // Single-point bounds (born == died) collapse to a point; give it a sane zoom.
     if (bounds.getNorthEast().equals(bounds.getSouthWest())) {
@@ -150,6 +174,7 @@
     accepting = true;
     guessInput.value = "";
     guessInput.disabled = false;
+    guessInput.readOnly = false;
     lifelineBtn.disabled = state.hint_used;
 
     if (bornMarker) map.removeLayer(bornMarker);
@@ -189,7 +214,9 @@
     if (!accepting || !raw.trim()) return;
     // (One-word guesses are handled by the server: some people only have one name.)
     accepting = false;
-    guessInput.disabled = true;
+    // Read-only rather than disabled: the input keeps focus, so a phone's
+    // keyboard stays open between people instead of closing and reopening.
+    guessInput.readOnly = true;
 
     let res;
     try {
@@ -197,7 +224,7 @@
     } catch (err) {
       showError(err);
       accepting = true;
-      guessInput.disabled = false;
+      guessInput.readOnly = false;
       return;
     }
     state = res.state;
@@ -206,7 +233,7 @@
       feedbackEl.textContent = "Type both first and last name.";
       feedbackEl.className = "feedback wrong";
       accepting = true;
-      guessInput.disabled = false;
+      guessInput.readOnly = false;
       guessInput.focus();
       return;
     }
@@ -411,13 +438,55 @@
     guessInput.focus();
   });
 
-  window.addEventListener("resize", () => {
-    map.invalidateSize();
+  function refit() {
+    map.invalidateSize({ animate: false });
     if (bornMarker && deathMarker) {
       fitToBounds(L.latLngBounds([bornMarker.getLatLng(), deathMarker.getLatLng()]));
       layoutMarkers();
     }
-  });
+  }
+
+  // ---------- On-screen keyboard (phones) ----------
+  // iPhones keep the page full height and only shrink the "visual viewport"
+  // when the keyboard opens; Android resizes the page (see the viewport meta
+  // tag). Either way the map, top bar and guess box are laid out in the
+  // visible area and the pins are refitted above the guess box.
+  const vv = window.visualViewport;
+  let fullHeight = window.innerHeight;
+  let syncQueued = false;
+
+  function syncViewport() {
+    syncQueued = false;
+    const height = vv ? vv.height : window.innerHeight;
+    const offsetTop = vv ? vv.offsetTop : 0;
+    if (document.activeElement !== guessInput) fullHeight = Math.max(window.innerHeight, height);
+    const covered = Math.max(0, Math.round(window.innerHeight - height - offsetTop));
+    const root = document.documentElement.style;
+    root.setProperty("--vv-top", `${Math.round(offsetTop)}px`);
+    root.setProperty("--vv-height", `${Math.round(height)}px`);
+    root.setProperty("--keyboard", `${covered}px`);
+    const keyboardOpen = document.activeElement === guessInput && height < fullHeight * 0.8;
+    document.body.classList.toggle("keyboard-open", keyboardOpen);
+    refit();
+  }
+
+  function queueSync() {
+    if (syncQueued) return;
+    syncQueued = true;
+    requestAnimationFrame(syncViewport);
+  }
+
+  if (vv) {
+    vv.addEventListener("resize", queueSync);
+    vv.addEventListener("scroll", queueSync);
+  }
+  window.addEventListener("resize", queueSync);
+  window.addEventListener("orientationchange", () => { fullHeight = 0; setTimeout(queueSync, 300); });
+  // The keyboard animates in; sync again once it has settled.
+  guessInput.addEventListener("focus", () => { queueSync(); setTimeout(queueSync, 350); });
+  guessInput.addEventListener("blur", () => { queueSync(); setTimeout(queueSync, 350); });
+  // iOS scrolls the page to show a focused input; the layout already does that.
+  window.addEventListener("scroll", () => { if (window.scrollY) window.scrollTo(0, 0); });
 
   // ---------- Boot ----------
   async function boot() {
@@ -442,5 +511,6 @@
     showCard();
   }
 
+  syncViewport();
   boot();
 })();
