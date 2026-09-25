@@ -13,7 +13,6 @@
   // ---------- DOM ----------
   const streakNumEl = document.getElementById("streakNum");
   const lifelineBtn = document.getElementById("lifelineBtn");
-  const hintToast = document.getElementById("hintToast");
   const guessCapsule = document.getElementById("guessCapsule");
   const guessForm = document.getElementById("guessForm");
   const guessInput = document.getElementById("guessInput");
@@ -84,7 +83,6 @@
     guessInput.value = "";
     guessInput.disabled = false;
     hideSuggestions();
-    hintToast.hidden = true;
 
     currentPerson = pickNextPerson();
 
@@ -211,8 +209,9 @@
     if (lifelineUsed || !accepting) return;
     lifelineUsed = true;
     lifelineBtn.disabled = true;
-    hintToast.textContent = currentPerson.hint;
-    hintToast.hidden = false;
+    feedbackEl.textContent = `💡 ${currentPerson.hint}`;
+    feedbackEl.className = "feedback hint";
+    guessInput.focus();
   });
 
   playAgainBtn.addEventListener("click", () => {
