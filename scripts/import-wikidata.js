@@ -50,8 +50,9 @@ async function sparqlFetch(query, attempt = 1) {
     body: "query=" + encodeURIComponent(query),
   });
   if (!res.ok) {
-    if (attempt < 4 && (res.status === 429 || res.status >= 500)) {
-      const wait = Number(res.headers.get("retry-after")) * 1000 || 5000 * attempt;
+    if (attempt < 10 && (res.status === 429 || res.status >= 500)) {
+      // Wikidata sometimes limits clients to one request a minute.
+      const wait = Number(res.headers.get("retry-after")) * 1000 || (res.status === 429 ? 65000 : 5000 * attempt);
       console.log(`  Wikidata answered ${res.status}, retrying in ${wait / 1000}s…`);
       await new Promise((r) => setTimeout(r, wait));
       return sparqlFetch(query, attempt + 1);
@@ -83,27 +84,31 @@ async function fetchDetails(ids) {
     SELECT ?p ?label ?svLabel ?desc ?birth ?bprec ?death ?dprec
            ?bpLabel ?bcoord ?bcLabel ?baLabel ?dpLabel ?dcoord ?dcLabel ?daLabel WHERE {
       VALUES ?p { ${values} }
-      ?p rdfs:label ?label . FILTER(lang(?label) = "en")
+      # Many names are only stored under Wikidata's multilingual "mul" code now.
+      OPTIONAL { ?p rdfs:label ?enLabel . FILTER(lang(?enLabel) = "en") }
+      OPTIONAL { ?p rdfs:label ?mulLabel . FILTER(lang(?mulLabel) = "mul") }
+      BIND(COALESCE(?enLabel, ?mulLabel) AS ?label)
+      FILTER(BOUND(?label))
       OPTIONAL { ?p rdfs:label ?svLabel . FILTER(lang(?svLabel) = "sv") }
       OPTIONAL { ?p schema:description ?desc . FILTER(lang(?desc) = "en") }
       ?p wdt:P569 ?birth ; p:P569/psv:P569 [ wikibase:timeValue ?birth ; wikibase:timePrecision ?bprec ] .
       ?p wdt:P570 ?death ; p:P570/psv:P570 [ wikibase:timeValue ?death ; wikibase:timePrecision ?dprec ] .
       ?p wdt:P19 ?bp . ?bp wdt:P625 ?bcoord . OPTIONAL { ?bp wdt:P17 ?bc . } OPTIONAL { ?bp wdt:P131 ?ba . }
       ?p wdt:P20 ?dp . ?dp wdt:P625 ?dcoord . OPTIONAL { ?dp wdt:P17 ?dc . } OPTIONAL { ?dp wdt:P131 ?da . }
-      SERVICE wikibase:label { bd:serviceParam wikibase:language "en".
+      SERVICE wikibase:label { bd:serviceParam wikibase:language "en,mul".
         ?bp rdfs:label ?bpLabel . ?dp rdfs:label ?dpLabel . ?bc rdfs:label ?bcLabel . ?dc rdfs:label ?dcLabel .
         ?ba rdfs:label ?baLabel . ?da rdfs:label ?daLabel . }
     }`);
   const alts = await sparql(`
     SELECT ?p ?alt WHERE {
       VALUES ?p { ${values} }
-      ?p skos:altLabel ?alt . FILTER(lang(?alt) = "en")
+      ?p skos:altLabel ?alt . FILTER(lang(?alt) = "en" || lang(?alt) = "mul")
     }`);
   const jobs = await sparql(`
     SELECT ?p ?jobLabel WHERE {
       VALUES ?p { ${values} }
       ?p wdt:P106 ?job .
-      SERVICE wikibase:label { bd:serviceParam wikibase:language "en". ?job rdfs:label ?jobLabel . }
+      SERVICE wikibase:label { bd:serviceParam wikibase:language "en,mul". ?job rdfs:label ?jobLabel . }
     }`);
 
   const byId = new Map();
