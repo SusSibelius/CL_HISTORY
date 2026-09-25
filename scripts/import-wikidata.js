@@ -5,15 +5,11 @@
 //
 // Usage:  node scripts/import-wikidata.js [count]      (default 2000)
 // Then:   node scripts/build-seed.js   and run the seed files in Supabase.
-//
-// People in scripts/curated.js are kept exactly as written there (only their
-// fame is filled in from Wikidata).
 "use strict";
 
 const fs = require("fs");
 const path = require("path");
 const { normalize, words, answerMatches } = require("../match.js");
-const CURATED = require("./curated.js");
 
 const ENDPOINT = "https://query.wikidata.org/sparql";
 const USER_AGENT = "Historiegissare-import/1.0 (https://github.com/SusSibelius/CL_HISTORY)";
@@ -167,6 +163,10 @@ const latin = (s) => /^[\p{Script=Latin}\p{M}\d .,'’()-]+$/u.test(s);
 // A hint must not give away the name, and must not contain the years.
 function makeHint(desc, jobs, name) {
   let h = (desc || "").replace(/\([^)]*\)/g, " ");
+  // Cut the description where the first year appears: "French Emperor 1804–1814
+  // and again in 1815" → "French Emperor".
+  const firstYear = h.search(/\b(from |between |since |until |in |c\. |ca\. |circa )?\d{3,4}\b/i);
+  if (firstYear > 10) h = h.slice(0, firstYear);
   h = h.replace(/\b(c\.|ca\.|circa|born|died|fl\.)?\s*\d{1,4}(s|\s*(BC|BCE|AD|CE))?\b/gi, " ");
   h = h.replace(/[–—-]\s*(?=[,;]|$)/g, " ").replace(/\s+,/g, ",").replace(/\s+/g, " ").trim();
   // Words left dangling by removing the years ("ruler from to", "in the").
@@ -199,14 +199,21 @@ function toPerson(d, fame) {
   const dPlace = placeName(val(r, "dpLabel"), val(r, "daLabel"), val(r, "dcLabel"), name);
   if (!bc || !dc || !bPlace || !dPlace) return { skip: "missing place" };
 
-  // Accepted answers: English and Swedish names, and English aliases that are
-  // full names (at least two words, unless the person is known by one name).
+  // Accepted answers: the English and Swedish names, plus English aliases that
+  // are full names (at least two words, unless the person is known by one name)
+  // and share a word with the English name — that keeps "M. K. Gandhi" and
+  // "Napoleon I" but drops nicknames ("Father of the Nation") and odd
+  // transliterations from other languages.
   const oneWord = words(normalize(name)).length === 1;
+  const nameWords = words(normalize(name)).filter((w) => w.length >= 3);
+  const sharesWord = (n) => words(n).some((w) => nameWords.some((l) => answerMatches(w, l)));
   const answers = [];
-  for (const a of [name, val(r, "svLabel"), ...d.alts]) {
+  const svLabel = val(r, "svLabel");
+  for (const a of [name, svLabel, ...d.alts]) {
     if (!a || !latin(a) || a.length > 40) continue;
     const n = normalize(a.replace(/\([^)]*\)/g, ""));
     if (!n || (!oneWord && words(n).length < 2) || answers.includes(n)) continue;
+    if (a !== name && a !== svLabel && !sharesWord(n)) continue;
     answers.push(n);
   }
 
@@ -227,7 +234,7 @@ function toPerson(d, fame) {
 
 // Two people must never be guessable with the same answer (typos included).
 // Aliases that clash are dropped; if the main names clash, the less famous
-// person is dropped (curated people are never dropped). One pass: first find
+// person is dropped. One pass: first find
 // every clashing pair, then resolve them most-famous first.
 function resolveClashes(people) {
   const compact = (s) => s.replace(/ /g, "");
@@ -256,11 +263,10 @@ function resolveClashes(people) {
     const pa = people[A.i], pb = people[B.i];
     const aLive = A.main || pa.answers.includes(A.a), bLive = B.main || pb.answers.includes(B.a);
     if (!aLive || !bLive) continue;
-    if (!A.main && !pa.curated) removeAlias(A);
-    else if (!B.main && !pb.curated) removeAlias(B);
-    else if (pa.curated && pb.curated) continue;
+    if (!A.main) removeAlias(A);
+    else if (!B.main) removeAlias(B);
     else {
-      const loser = pa.curated ? B : pb.curated ? A : pa.fame >= pb.fame ? B : A;
+      const loser = pa.fame >= pb.fame ? B : A;
       const winner = loser === A ? B : A;
       gone.add(loser.i);
       dropped.push(`${people[loser.i].name} (clashes with ${people[winner.i].name})`);
@@ -279,22 +285,14 @@ async function main() {
   const candidates = await fetchCandidates();
   console.log(`  ${candidates.length} people with at least ${MIN_FAME} sitelinks`);
 
-  const curatedById = new Map(CURATED.map((p) => [p.wikidata, p]));
   const people = [];
   const skipped = {};
-  const seenCurated = new Set();
 
   for (let start = 0; start < candidates.length && people.length < TARGET * 1.05; start += BATCH) {
     const chunk = candidates.slice(start, start + BATCH);
     process.stdout.write(`Fetching details ${start + 1}–${start + chunk.length}…`);
     const details = await fetchDetails(chunk.map((c) => c.id));
     for (const c of chunk) {
-      const cur = curatedById.get(c.id);
-      if (cur) {
-        seenCurated.add(cur.name);
-        people.push({ ...cur, fame: c.fame, curated: true });
-        continue;
-      }
       const d = details.get(c.id);
       if (!d) { skipped["incomplete data on Wikidata"] = (skipped["incomplete data on Wikidata"] || 0) + 1; continue; }
       const r = toPerson(d, c.fame);
@@ -304,18 +302,12 @@ async function main() {
     console.log(` ${people.length} kept`);
   }
 
-  // Curated people Wikidata didn't return stay in with a high fame.
-  for (const p of CURATED) {
-    if (!seenCurated.has(p.name)) people.push({ ...p, fame: 200, curated: true });
-  }
-
   console.log("Checking that no two people can be confused…");
   const dropped = resolveClashes(people);
   people.sort((a, b) => b.fame - a.fame);
-  // The most famous TARGET people, plus any curated person below the cut.
-  const out = people.filter((p, i) => i < TARGET || p.curated).map(({ curated, ...p }) => p);
+  const out = people.slice(0, TARGET);
   const header = `// Generated by scripts/import-wikidata.js from Wikidata (CC0) on ${new Date().toISOString().slice(0, 10)}
-// — don't edit by hand: change scripts/curated.js or the import script and re-run it.
+// — don't edit by hand: change the import script and re-run it.
 // ${out.length} people, most famous first. fame = number of Wikipedia/sister-project
 // language editions with an article; the game uses it to order runs from easy to hard.
 `;
