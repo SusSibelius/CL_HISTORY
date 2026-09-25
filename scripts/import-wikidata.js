@@ -23,7 +23,27 @@ const BATCH = 150;            // people per detail query
 
 // ---------- Wikidata ----------
 
-async function sparql(query, attempt = 1) {
+// Responses are cached for a day in the system temp folder.
+const CACHE = path.join(require("os").tmpdir(), "historiegissare-wikidata-cache.json");
+let cache = {};
+try {
+  const c = JSON.parse(fs.readFileSync(CACHE, "utf8"));
+  if (Date.now() - c.time < 24 * 3600 * 1000) cache = c.entries;
+} catch (e) { /* no cache yet */ }
+function saveCache() {
+  fs.writeFileSync(CACHE, JSON.stringify({ time: Date.now(), entries: cache }));
+}
+
+async function sparql(query) {
+  const key = require("crypto").createHash("sha1").update(query).digest("hex");
+  if (!cache[key]) {
+    cache[key] = await sparqlFetch(query);
+    saveCache();
+  }
+  return cache[key];
+}
+
+async function sparqlFetch(query, attempt = 1) {
   const res = await fetch(ENDPOINT, {
     method: "POST",
     headers: {
@@ -38,7 +58,7 @@ async function sparql(query, attempt = 1) {
       const wait = Number(res.headers.get("retry-after")) * 1000 || 5000 * attempt;
       console.log(`  Wikidata answered ${res.status}, retrying in ${wait / 1000}s…`);
       await new Promise((r) => setTimeout(r, wait));
-      return sparql(query, attempt + 1);
+      return sparqlFetch(query, attempt + 1);
     }
     throw new Error(`Wikidata query failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
   }
@@ -186,36 +206,48 @@ function toPerson(d, fame) {
 
 // Two people must never be guessable with the same answer (typos included).
 // Aliases that clash are dropped; if the main names clash, the less famous
-// person is dropped.
+// person is dropped (curated people are never dropped). One pass: first find
+// every clashing pair, then resolve them most-famous first.
 function resolveClashes(people) {
-  const keys = (p) => [normalize(p.name), ...p.answers];
   const compact = (s) => s.replace(/ /g, "");
-  const dropped = [];
-  let changed = true;
-  while (changed) {
-    changed = false;
-    const all = [];
-    people.forEach((p, i) => keys(p).forEach((a) => all.push({ i, a, len: compact(a).length })));
-    all.sort((x, y) => x.len - y.len);
-    for (let x = 0; x < all.length && !changed; x++) {
-      for (let y = x + 1; y < all.length && all[y].len - all[x].len <= 2; y++) {
-        const A = all[x], B = all[y];
-        if (A.i === B.i) continue;
-        if (!answerMatches(A.a, B.a) && !answerMatches(B.a, A.a)) continue;
-        const [pa, pb] = [people[A.i], people[B.i]];
-        const aMain = A.a === normalize(pa.name), bMain = B.a === normalize(pb.name);
-        if (!aMain && !pa.curated) pa.answers = pa.answers.filter((s) => s !== A.a);
-        else if (!bMain && !pb.curated) pb.answers = pb.answers.filter((s) => s !== B.a);
-        else {
-          const loser = pa.curated ? B.i : pb.curated ? A.i : pa.fame >= pb.fame ? B.i : A.i;
-          dropped.push(`${people[loser].name} (clashes with ${people[loser === A.i ? B.i : A.i].name})`);
-          people.splice(loser, 1);
-        }
-        changed = true;
-        break;
-      }
+  const entries = [];
+  people.forEach((p, i) =>
+    [normalize(p.name), ...p.answers].forEach((a) => entries.push({ i, a, main: a === normalize(p.name), len: compact(a).length }))
+  );
+  entries.sort((x, y) => x.len - y.len);
+
+  // Two answers can only match if their lengths are close (at most a few typos).
+  const pairs = [];
+  for (let x = 0; x < entries.length; x++) {
+    for (let y = x + 1; y < entries.length && entries[y].len - entries[x].len <= 4; y++) {
+      const A = entries[x], B = entries[y];
+      if (A.i !== B.i && (answerMatches(A.a, B.a) || answerMatches(B.a, A.a))) pairs.push([A, B]);
     }
   }
+  const fameOf = (e) => people[e.i].fame;
+  pairs.sort((u, v) => Math.max(fameOf(v[0]), fameOf(v[1])) - Math.max(fameOf(u[0]), fameOf(u[1])));
+
+  const gone = new Set();
+  const dropped = [];
+  const removeAlias = (e) => { people[e.i].answers = people[e.i].answers.filter((s) => s !== e.a); };
+  for (const [A, B] of pairs) {
+    if (gone.has(A.i) || gone.has(B.i)) continue;
+    const pa = people[A.i], pb = people[B.i];
+    const aLive = A.main || pa.answers.includes(A.a), bLive = B.main || pb.answers.includes(B.a);
+    if (!aLive || !bLive) continue;
+    if (!A.main && !pa.curated) removeAlias(A);
+    else if (!B.main && !pb.curated) removeAlias(B);
+    else if (pa.curated && pb.curated) continue;
+    else {
+      const loser = pa.curated ? B : pb.curated ? A : pa.fame >= pb.fame ? B : A;
+      const winner = loser === A ? B : A;
+      gone.add(loser.i);
+      dropped.push(`${people[loser.i].name} (clashes with ${people[winner.i].name})`);
+    }
+  }
+  const kept = people.filter((_, i) => !gone.has(i));
+  people.length = 0;
+  people.push(...kept);
   return dropped;
 }
 
