@@ -83,9 +83,12 @@
     const dx = pd.x - pb.x;
     const dy = pd.y - pb.y;
 
+    // Labels differ in width ("1889" vs "551 BC"): keep their centres far enough apart.
+    const gap = Math.max(LABEL_GAP,
+      (bornEl.querySelector(".marker-year").offsetWidth + diedEl.querySelector(".marker-year").offsetWidth) / 2 + 12);
     let shift = 0;
-    if (Math.abs(dx) < LABEL_GAP && Math.abs(dy) < LABEL_H) {
-      shift = (LABEL_GAP - Math.abs(dx)) / 2;
+    if (Math.abs(dx) < gap && Math.abs(dy) < LABEL_H) {
+      shift = (gap - Math.abs(dx)) / 2;
     }
     // Born goes to whichever side it already leans towards (left on a tie).
     const dir = dx >= 0 ? 1 : -1;
@@ -184,11 +187,7 @@
 
   async function handleGuess(raw) {
     if (!accepting || !raw.trim()) return;
-    if (normalize(raw).split(/\s+/).length < 2) {
-      feedbackEl.textContent = "Type both first and last name.";
-      feedbackEl.className = "feedback wrong";
-      return;
-    }
+    // (One-word guesses are handled by the server: some people only have one name.)
     accepting = false;
     guessInput.disabled = true;
 

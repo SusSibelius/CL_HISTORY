@@ -96,7 +96,7 @@
   const { normalize: norm, words, answerMatches } = window.HG_MATCH;
 
   function localApi() {
-    const ready = loadScript("data.js?v=9");
+    const ready = loadScript("data.js?v=10");
     const todayKey = () => new Date().toISOString().slice(0, 10); // UTC day, like the server
 
     function load() {
@@ -118,7 +118,7 @@
     function order(day) {
       if (!orderCache[day]) {
         orderCache[day] = PEOPLE
-          .map((p, i) => ({ p, key: Math.log(i + 1) + 2.4 * (hash(day + ":" + p.name) / 4294967296 - 0.5) }))
+          .map((p, i) => ({ p, key: Math.log(i + 21) + 2.4 * (hash(day + ":" + p.name) / 4294967296 - 0.5) }))
           .sort((x, y) => x.key - y.key)
           .map((x) => x.p);
       }

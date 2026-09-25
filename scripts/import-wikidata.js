@@ -85,17 +85,18 @@ async function fetchDetails(ids) {
   const values = ids.map((id) => "wd:" + id).join(" ");
   const main = await sparql(`
     SELECT ?p ?label ?svLabel ?desc ?birth ?bprec ?death ?dprec
-           ?bpLabel ?bcoord ?bcLabel ?dpLabel ?dcoord ?dcLabel WHERE {
+           ?bpLabel ?bcoord ?bcLabel ?baLabel ?dpLabel ?dcoord ?dcLabel ?daLabel WHERE {
       VALUES ?p { ${values} }
       ?p rdfs:label ?label . FILTER(lang(?label) = "en")
       OPTIONAL { ?p rdfs:label ?svLabel . FILTER(lang(?svLabel) = "sv") }
       OPTIONAL { ?p schema:description ?desc . FILTER(lang(?desc) = "en") }
       ?p wdt:P569 ?birth ; p:P569/psv:P569 [ wikibase:timeValue ?birth ; wikibase:timePrecision ?bprec ] .
       ?p wdt:P570 ?death ; p:P570/psv:P570 [ wikibase:timeValue ?death ; wikibase:timePrecision ?dprec ] .
-      ?p wdt:P19 ?bp . ?bp wdt:P625 ?bcoord . OPTIONAL { ?bp wdt:P17 ?bc . }
-      ?p wdt:P20 ?dp . ?dp wdt:P625 ?dcoord . OPTIONAL { ?dp wdt:P17 ?dc . }
+      ?p wdt:P19 ?bp . ?bp wdt:P625 ?bcoord . OPTIONAL { ?bp wdt:P17 ?bc . } OPTIONAL { ?bp wdt:P131 ?ba . }
+      ?p wdt:P20 ?dp . ?dp wdt:P625 ?dcoord . OPTIONAL { ?dp wdt:P17 ?dc . } OPTIONAL { ?dp wdt:P131 ?da . }
       SERVICE wikibase:label { bd:serviceParam wikibase:language "en".
-        ?bp rdfs:label ?bpLabel . ?dp rdfs:label ?dpLabel . ?bc rdfs:label ?bcLabel . ?dc rdfs:label ?dcLabel . }
+        ?bp rdfs:label ?bpLabel . ?dp rdfs:label ?dpLabel . ?bc rdfs:label ?bcLabel . ?dc rdfs:label ?dcLabel .
+        ?ba rdfs:label ?baLabel . ?da rdfs:label ?daLabel . }
     }`);
   const alts = await sparql(`
     SELECT ?p ?alt WHERE {
@@ -140,10 +141,24 @@ function point(wkt) {
 
 const isQid = (s) => !s || /^Q\d+$/.test(s);
 
-function placeName(place, country) {
+// Buildings and the like get the town they're in added, so the reveal reads
+// "UCLA Medical Center, Los Angeles, United States".
+const BUILDING = /\b(hospital|clinic|cl[ií]nica|medical|cent(er|re)|infirmary|sanatorium|palace|castle|abbey|monastery|convent|church|cathedral|house|hall|bunker|estate|manor|villa|hotel|prison|residence|apartment|farm|school|university|college|barracks|camp|ship|mansion|château|chateau|schloss|palazzo|tower|fortress|court|garden)\b/i;
+
+function placeName(place, admin, country, personName) {
   if (isQid(place)) return isQid(country) ? null : country;
-  if (isQid(country) || place === country || place.includes(country)) return place;
-  return `${place}, ${country}`;
+  // Street addresses and places named after the person ("Birthplace of
+  // Ronald Reagan") are replaced by the town they're in.
+  const nameWords = words(normalize(personName)).filter((w) => w.length >= 4);
+  if (/\d/.test(place) || /^(birthplace|home|house) of\b/i.test(place) ||
+      words(normalize(place)).some((w) => nameWords.includes(w))) {
+    if (!isQid(admin)) place = admin;
+    else if (/\d/.test(place) && !isQid(country)) return country;  // a bare street address
+  }
+  const parts = [place];
+  if (BUILDING.test(place) && !isQid(admin) && admin !== country && !place.includes(admin)) parts.push(admin);
+  if (!isQid(country) && place !== country && !place.includes(country)) parts.push(country);
+  return parts.join(", ");
 }
 
 // Names must be written in the Latin alphabet (accents are fine).
@@ -154,6 +169,12 @@ function makeHint(desc, jobs, name) {
   let h = (desc || "").replace(/\([^)]*\)/g, " ");
   h = h.replace(/\b(c\.|ca\.|circa|born|died|fl\.)?\s*\d{1,4}(s|\s*(BC|BCE|AD|CE))?\b/gi, " ");
   h = h.replace(/[–—-]\s*(?=[,;]|$)/g, " ").replace(/\s+,/g, ",").replace(/\s+/g, " ").trim();
+  // Words left dangling by removing the years ("ruler from to", "in the").
+  for (let i = 0; i < 3; i++) {
+    h = h.replace(/\b(from|between|since|until|in|to|and|during)\s+(?=(to|and|until|,|;|$))/gi, "")
+      .replace(/\s+(from|between|since|until|to|and|in|of|the|during)\s*$/i, "")
+      .replace(/\s+,/g, ",").replace(/\s+/g, " ").trim();
+  }
   h = h.replace(/^[,;:\s-]+|[,;:\s-]+$/g, "");
   if (h.length < 4 && jobs.length) h = [...new Set(jobs)].filter((j) => !isQid(j)).slice(0, 2).join(", ");
   if (!h) return "No description available";
@@ -174,8 +195,8 @@ function toPerson(d, fame) {
   if (born == null || died == null || died < born || died - born > 110) return { skip: "implausible dates" };
 
   const bc = point(val(r, "bcoord")), dc = point(val(r, "dcoord"));
-  const bPlace = placeName(val(r, "bpLabel"), val(r, "bcLabel"));
-  const dPlace = placeName(val(r, "dpLabel"), val(r, "dcLabel"));
+  const bPlace = placeName(val(r, "bpLabel"), val(r, "baLabel"), val(r, "bcLabel"), name);
+  const dPlace = placeName(val(r, "dpLabel"), val(r, "daLabel"), val(r, "dcLabel"), name);
   if (!bc || !dc || !bPlace || !dPlace) return { skip: "missing place" };
 
   // Accepted answers: English and Swedish names, and English aliases that are
@@ -258,7 +279,7 @@ async function main() {
   const candidates = await fetchCandidates();
   console.log(`  ${candidates.length} people with at least ${MIN_FAME} sitelinks`);
 
-  const curatedByName = new Map(CURATED.map((p) => [normalize(p.name), p]));
+  const curatedById = new Map(CURATED.map((p) => [p.wikidata, p]));
   const people = [];
   const skipped = {};
   const seenCurated = new Set();
@@ -268,14 +289,14 @@ async function main() {
     process.stdout.write(`Fetching details ${start + 1}–${start + chunk.length}…`);
     const details = await fetchDetails(chunk.map((c) => c.id));
     for (const c of chunk) {
-      const d = details.get(c.id);
-      if (!d) { skipped["no English name"] = (skipped["no English name"] || 0) + 1; continue; }
-      const cur = curatedByName.get(normalize(val(d.rows[0], "label")));
+      const cur = curatedById.get(c.id);
       if (cur) {
         seenCurated.add(cur.name);
-        people.push({ ...cur, fame: c.fame, wikidata: c.id, curated: true });
+        people.push({ ...cur, fame: c.fame, curated: true });
         continue;
       }
+      const d = details.get(c.id);
+      if (!d) { skipped["incomplete data on Wikidata"] = (skipped["incomplete data on Wikidata"] || 0) + 1; continue; }
       const r = toPerson(d, c.fame);
       if (r.skip) skipped[r.skip] = (skipped[r.skip] || 0) + 1;
       else people.push(r.person);

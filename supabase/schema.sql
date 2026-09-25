@@ -181,15 +181,15 @@ language sql immutable as $$
 $$;
 
 -- Today's order, the same for every player. Runs go from famous to obscure:
--- people are ranked by fame, and each day every rank gets a random nudge of up
--- to about 3x either way (the log of the rank moves by at most ±1.2). So a
--- top-10 person can show up anywhere in the first ~30, but someone ranked
--- 1000th never shows up early.
+-- people are ranked by fame, and each day every person gets a random nudge
+-- (log(rank + 20) moves by at most ±1.2). The +20 lets the top ~50 mix freely
+-- at the start, so runs don't open with the same people every day, while
+-- someone far down the list never shows up early.
 create or replace function hg_private.person_at(p_day date, p_pos int) returns public.people
 language sql stable as $$
   select p.* from public.people p
   join (select id, row_number() over (order by fame desc, id) as rk from public.people) r on r.id = p.id
-  order by ln(r.rk) + 2.4 * (hg_private.unit_hash(p_day::text || ':' || p.id::text) - 0.5), p.id
+  order by ln(r.rk + 20) + 2.4 * (hg_private.unit_hash(p_day::text || ':' || p.id::text) - 0.5), p.id
   offset p_pos limit 1
 $$;
 
