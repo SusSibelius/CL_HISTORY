@@ -364,21 +364,31 @@ html, body {
   justify-content: center;
   gap: 8px;
 }
-.reroll {
-  flex: none;
-  width: 32px;
-  height: 32px;
+.name-input {
+  min-width: 0;
+  flex: 1;
   border: none;
-  border-radius: 50%;
-  background: rgba(34, 38, 43, 0.06);
-  color: var(--ink);
-  font-size: 16px;
-  cursor: pointer;
+  border-bottom: 2px solid rgba(34, 38, 43, 0.15);
+  background: transparent;
+  padding: 2px 4px 4px;
   margin-bottom: 6px;
-  transition: background 0.15s ease, transform 0.3s ease;
+  font-family: "Fraunces", serif;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--ink);
+  text-align: center;
+  outline: none;
+  transition: border-color 0.15s ease;
 }
-.reroll:hover { background: rgba(214, 164, 25, 0.2); transform: rotate(90deg); }
-.reroll:disabled { opacity: 0.4; cursor: default; }
+.name-input:focus { border-bottom-color: var(--accent); }
+.name-input::placeholder { color: rgba(34, 38, 43, 0.3); }
+.name-error {
+  min-height: 18px;
+  margin: 4px 0 0 0;
+  font-size: 13px;
+  color: var(--wrong);
+}
+label.card-lead { display: block; }
 .card-sub {
   margin: 0 0 16px 0;
   font-size: 14px;

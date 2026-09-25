@@ -54,7 +54,7 @@
     return {
       online: true,
       today: () => rpc("hg_today", { p_device: device }),
-      rerollName: () => rpc("hg_reroll_name", { p_device: device }),
+      setName: (name) => rpc("hg_set_name", { p_device: device, p_name: name }),
       start: () => rpc("hg_start", { p_device: device }),
       guess: (text) => rpc("hg_guess", { p_device: device, p_guess: text }),
       hint: () => rpc("hg_hint", { p_device: device }).then((r) => r.hint),
@@ -63,14 +63,17 @@
     };
   }
 
-  // ---------- Offline (local, from data.js) ----------
-  const ADJECTIVES = ["Curious", "Bold", "Wandering", "Quiet", "Brave", "Clever", "Swift", "Patient",
-    "Lucky", "Keen", "Gentle", "Restless", "Sharp", "Humble", "Daring", "Merry"];
-  const NOUNS = ["Cartographer", "Archivist", "Chronicler", "Navigator", "Scribe", "Explorer", "Historian", "Pilgrim",
-    "Voyager", "Scholar", "Herald", "Alchemist", "Astronomer", "Wanderer", "Curator", "Bard"];
-  const pick = (a) => a[Math.floor(Math.random() * a.length)];
-  const randomName = () => `${pick(ADJECTIVES)} ${pick(NOUNS)} ${10 + Math.floor(Math.random() * 90)}`;
+  // ---------- Player-chosen names ----------
+  // Same basic rules as hg_set_name in supabase/schema.sql, for instant feedback.
+  // The word filter only runs on the server (offline mode has no filter; only
+  // you see your name there).
+  const NAME_RULES = "Use 2–24 characters: letters, numbers, spaces and . _ ' -";
+  window.HG_NAME_RULES = NAME_RULES;
+  window.HG_cleanName = (name) => String(name || "").normalize("NFC").trim().replace(/\s+/g, " ");
+  window.HG_validName = (n) =>
+    n.length >= 2 && n.length <= 24 && /^[\p{Script=Latin}\p{M}\p{N} ._'-]+$/u.test(n) && /[\p{L}\p{N}]/u.test(n);
 
+  // ---------- Offline (local, from data.js) ----------
   function loadScript(src) {
     return new Promise((resolve, reject) => {
       const s = document.createElement("script");
@@ -91,7 +94,7 @@
   }
 
   function localApi() {
-    const ready = loadScript("data.js?v=4");
+    const ready = loadScript("data.js?v=7");
     const todayKey = () => new Date().toISOString().slice(0, 10); // UTC day, like the server
 
     function load() {
@@ -100,7 +103,7 @@
       try { run = JSON.parse(storageGet("hg_run") || "null"); } catch (e) { run = null; }
       // A run started yesterday can still be finished after midnight UTC.
       if (!run || (run.day !== day && !(run.started && !run.finished))) {
-        run = { day, username: randomName(), score: 0, hint_used: false, started: false, finished: false };
+        run = { day, username: null, score: 0, hint_used: false, started: false, finished: false };
         save(run);
       }
       return run;
@@ -136,17 +139,20 @@
     return {
       online: false,
       today: async () => { await ready; return state(load()); },
-      rerollName: async () => {
+      setName: async (name) => {
         await ready;
         const run = load();
         if (run.started) throw new Error("run already started");
-        run.username = randomName();
+        const n = window.HG_cleanName(name);
+        if (!window.HG_validName(n)) throw new Error(NAME_RULES);
+        run.username = n;
         save(run);
         return state(run);
       },
       start: async () => {
         await ready;
         const run = load();
+        if (!run.username) throw new Error("Choose a name first");
         run.started = true;
         save(run);
         return state(run);
