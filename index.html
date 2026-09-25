@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
 
@@ -39,12 +39,12 @@
         <input
           type="text"
           id="guessInput"
-          placeholder="Who is this?"
+          placeholder="First and last name"
+          aria-describedby="feedback"
           autocomplete="off"
           spellcheck="false"
           disabled
         />
-        <div class="suggestions" id="suggestions" hidden></div>
       </div>
       <button class="hint-btn" id="lifelineBtn" type="button" title="Hint (one per run)" aria-label="Use hint (one per run)">💡</button>
       <button type="submit" class="guess-submit">Guess</button>
@@ -58,7 +58,7 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="config.js?v=5"></script>
-  <script src="api.js?v=7"></script>
-  <script src="game.js?v=7"></script>
+  <script src="api.js?v=8"></script>
+  <script src="game.js?v=8"></script>
 </body>
 </html>

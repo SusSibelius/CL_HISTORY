@@ -101,6 +101,66 @@ language sql stable as $$
   select trim(regexp_replace(extensions.unaccent(lower(coalesce(t, ''))), '[^a-z0-9\s]', '', 'g'))
 $$;
 
+-- Edit distance counting a swap of two neighbouring letters as one edit
+-- ("khalo" → "kahlo" is 1), so common typos stay cheap.
+create or replace function hg_private.typo_distance(a text, b text) returns int
+language plpgsql immutable as $$
+declare
+  la int := char_length(a);
+  lb int := char_length(b);
+  w int := lb + 1;
+  d int[];
+  i int;
+  j int;
+begin
+  if la = 0 then return lb; end if;
+  if lb = 0 then return la; end if;
+  d := array_fill(0, array[(la + 1) * w]);
+  -- d[i*w + j + 1] = distance between the first i letters of a and first j of b
+  for i in 0..la loop d[i * w + 1] := i; end loop;
+  for j in 0..lb loop d[j + 1] := j; end loop;
+  for i in 1..la loop
+    for j in 1..lb loop
+      d[i * w + j + 1] := least(
+        d[(i - 1) * w + j + 1] + 1,
+        d[i * w + j] + 1,
+        d[(i - 1) * w + j] + case when substr(a, i, 1) = substr(b, j, 1) then 0 else 1 end);
+      if i > 1 and j > 1 and substr(a, i, 1) = substr(b, j - 1, 1) and substr(a, i - 1, 1) = substr(b, j, 1) then
+        d[i * w + j + 1] := least(d[i * w + j + 1], d[(i - 2) * w + j - 1] + 1);
+      end if;
+    end loop;
+  end loop;
+  return d[la * w + lb + 1];
+end
+$$;
+
+-- Does a (normalized) guess match a (normalized) accepted answer, allowing
+-- small typos? Compared word by word: words of 1–2 letters must be exact,
+-- 3–6 letters may have 1 typo, longer words 2. If the spacing differs
+-- ("davinci" vs "da vinci"), the names are compared without spaces instead,
+-- allowing 1 typo.
+create or replace function hg_private.answer_matches(g text, a text) returns boolean
+language plpgsql immutable as $$
+declare
+  gw text[] := regexp_split_to_array(g, '\s+');
+  aw text[] := regexp_split_to_array(a, '\s+');
+  i int;
+  allowed int;
+begin
+  if g = '' then return false; end if;
+  if array_length(gw, 1) = array_length(aw, 1) then
+    for i in 1..array_length(aw, 1) loop
+      allowed := case when char_length(aw[i]) <= 2 then 0 when char_length(aw[i]) <= 6 then 1 else 2 end;
+      if hg_private.typo_distance(gw[i], aw[i]) > allowed then
+        return false;
+      end if;
+    end loop;
+    return true;
+  end if;
+  return hg_private.typo_distance(replace(g, ' ', ''), replace(a, ' ', '')) <= 1;
+end
+$$;
+
 -- Today's shuffled order is the same for every player: sort by a hash of the
 -- day and the person id.
 create or replace function hg_private.person_at(p_day date, p_pos int) returns public.people
@@ -278,8 +338,16 @@ begin
   if r.finished_at is not null then raise exception 'no run in progress'; end if;
 
   p := hg_private.person_at(r.day, r.score);
-  ok := hg_private.norm(p_guess) <> ''
-        and exists (select 1 from unnest(p.answers) a where hg_private.norm(a) = hg_private.norm(p_guess));
+
+  -- First and last name are required. A one-word guess doesn't count as a
+  -- wrong answer (and isn't checked, so it doesn't reveal anything).
+  if array_length(regexp_split_to_array(hg_private.norm(p_guess), '\s+'), 1) < 2
+     and array_length(regexp_split_to_array(hg_private.norm(p.name), '\s+'), 1) >= 2 then
+    return json_build_object('needs_full_name', true, 'state', hg_private.state(r));
+  end if;
+
+  ok := exists (select 1 from unnest(p.answers || p.name) a
+                where hg_private.answer_matches(hg_private.norm(p_guess), hg_private.norm(a)));
 
   if ok then
     update public.runs set score = score + 1,
@@ -326,11 +394,8 @@ language sql stable security definer set search_path = public, pg_temp as $$
   where n <= least(greatest(p_limit, 1), 100) or me
 $$;
 
--- Names for the guess box's autocomplete (the whole pool, in no useful order).
-create or replace function public.hg_names() returns json
-language sql stable security definer set search_path = public, pg_temp as $$
-  select coalesce(json_agg(name order by name), '[]'::json) from public.people
-$$;
+-- The guess box no longer suggests names, so the list of people isn't exposed.
+drop function if exists public.hg_names();
 
 -- Only the public API is callable with the anonymous key.
 revoke all on all functions in schema hg_private from public, anon, authenticated;
@@ -338,5 +403,5 @@ revoke usage on schema hg_private from public, anon, authenticated;
 grant execute on function
   public.hg_today(uuid), public.hg_set_name(uuid, text), public.hg_start(uuid),
   public.hg_guess(uuid, text), public.hg_hint(uuid),
-  public.hg_leaderboard(uuid, int), public.hg_names()
+  public.hg_leaderboard(uuid, int)
 to anon, authenticated;

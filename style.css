@@ -255,29 +255,6 @@ html, body {
 .guess-submit:hover { transform: translateY(-1px); }
 .guess-submit:active { transform: translateY(0); }
 
-.suggestions {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  right: 0;
-  background: var(--glass-strong);
-  border-radius: 12px;
-  box-shadow: var(--shadow);
-  overflow: hidden;
-  max-height: 220px;
-  overflow-y: auto;
-}
-.suggestion-item {
-  padding: 10px 14px;
-  font-size: 14px;
-  cursor: pointer;
-  color: var(--ink);
-}
-.suggestion-item:hover,
-.suggestion-item.active {
-  background: rgba(34, 38, 43, 0.06);
-}
-
 .feedback {
   margin: 8px 4px 2px 4px;
   font-size: 13px;

@@ -5,7 +5,6 @@
 
   // ---------- State ----------
   let state = null; // today's run, as returned by the API
-  let names = [];
   let bornMarker, deathMarker;
   let accepting = false;
   let countdownTimer = null;
@@ -17,7 +16,6 @@
   const guessCapsule = document.getElementById("guessCapsule");
   const guessForm = document.getElementById("guessForm");
   const guessInput = document.getElementById("guessInput");
-  const suggestionsEl = document.getElementById("suggestions");
   const feedbackEl = document.getElementById("feedback");
   const overlay = document.getElementById("dailyOverlay");
   const card = document.getElementById("dailyCard");
@@ -133,12 +131,18 @@
   }
 
   // ---------- Rounds ----------
+  const GUESS_TIP = "First and last name — small typos are OK.";
+
+  function showTip() {
+    feedbackEl.textContent = GUESS_TIP;
+    feedbackEl.className = "feedback";
+  }
+
   function showPerson(person) {
     accepting = true;
     guessInput.value = "";
     guessInput.disabled = false;
     lifelineBtn.disabled = state.hint_used;
-    hideSuggestions();
 
     if (bornMarker) map.removeLayer(bornMarker);
     if (deathMarker) map.removeLayer(deathMarker);
@@ -175,9 +179,13 @@
 
   async function handleGuess(raw) {
     if (!accepting || !raw.trim()) return;
+    if (normalize(raw).split(/\s+/).length < 2) {
+      feedbackEl.textContent = "Type both first and last name.";
+      feedbackEl.className = "feedback wrong";
+      return;
+    }
     accepting = false;
     guessInput.disabled = true;
-    hideSuggestions();
 
     let res;
     try {
@@ -190,6 +198,15 @@
     }
     state = res.state;
 
+    if (res.needs_full_name) {
+      feedbackEl.textContent = "Type both first and last name.";
+      feedbackEl.className = "feedback wrong";
+      accepting = true;
+      guessInput.disabled = false;
+      guessInput.focus();
+      return;
+    }
+
     if (res.correct) {
       setScore(state.score, true);
       feedbackEl.textContent = `${res.answer.name} — correct.`;
@@ -199,8 +216,7 @@
 
       if (state.status === "playing") {
         setTimeout(() => {
-          feedbackEl.textContent = "";
-          feedbackEl.className = "feedback";
+          showTip();
           showPerson(state.person);
         }, 850);
       } else {
@@ -268,7 +284,7 @@
                  spellcheck="false" placeholder="Your name" value="${escapeHtml(s.username || savedName())}" />
         </div>
         <p class="name-error" id="nameError" role="alert"></p>
-        <p class="card-rules">You get <strong>one run per day</strong>. Everyone gets the same people in the same order. Name as many as you can in a row; one wrong guess ends the run. One 💡 hint per run.</p>
+        <p class="card-rules">You get <strong>one run per day</strong>. Everyone gets the same people in the same order. Name as many as you can in a row with <strong>first and last name</strong> (small typos are fine); one wrong guess ends the run. One 💡 hint per run.</p>
         <button class="primary-btn" id="startBtn" type="button">Start today's run</button>`;
     } else if (s.status === "playing") {
       html += `
@@ -364,41 +380,11 @@
     }
     overlay.hidden = true;
     clearInterval(countdownTimer);
-    feedbackEl.textContent = "";
-    feedbackEl.className = "feedback";
+    showTip();
     setScore(state.score);
     if (state.status === "playing") showPerson(state.person);
     else showCard();
   }
-
-  // ---------- Autocomplete ----------
-  function hideSuggestions() {
-    suggestionsEl.hidden = true;
-    suggestionsEl.innerHTML = "";
-  }
-
-  function showSuggestions(query) {
-    const q = normalize(query);
-    if (!q) return hideSuggestions();
-    const matches = names.filter((n) => normalize(n).includes(q)).slice(0, 6);
-    if (!matches.length) return hideSuggestions();
-
-    suggestionsEl.innerHTML = matches
-      .map((n) => `<div class="suggestion-item" data-name="${escapeHtml(n)}">${escapeHtml(n)}</div>`)
-      .join("");
-    suggestionsEl.hidden = false;
-  }
-
-  suggestionsEl.addEventListener("click", (e) => {
-    const item = e.target.closest(".suggestion-item");
-    if (!item) return;
-    guessInput.value = item.dataset.name;
-    hideSuggestions();
-    guessInput.focus();
-  });
-
-  guessInput.addEventListener("input", () => showSuggestions(guessInput.value));
-  guessInput.addEventListener("blur", () => setTimeout(hideSuggestions, 120));
 
   // ---------- Form / buttons ----------
   guessForm.addEventListener("submit", (e) => {
@@ -435,7 +421,7 @@
     card.innerHTML = `<p class="card-lead">Loading today's run…</p>`;
     overlay.hidden = false;
     try {
-      [state, names] = await Promise.all([api.today(), names.length ? names : api.names()]);
+      state = await api.today();
     } catch (err) {
       card.innerHTML = `
         <p class="card-lead bad">Couldn't reach the game server</p>
