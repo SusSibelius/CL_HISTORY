@@ -1,0 +1,277 @@
+// Builds data.js from Wikidata: the most famous people who have died and whose
+// birth and death places have map coordinates. Fame = how many Wikipedia (and
+// sister project) language editions have an article about the person; the game
+// uses it to make each daily run start easy and get harder.
+//
+// Usage:  node scripts/import-wikidata.js [count]      (default 2000)
+// Then:   node scripts/build-seed.js   and run the seed files in Supabase.
+//
+// People in scripts/curated.js are kept exactly as written there (only their
+// fame is filled in from Wikidata).
+"use strict";
+
+const fs = require("fs");
+const path = require("path");
+const { normalize, words, answerMatches } = require("../match.js");
+const CURATED = require("./curated.js");
+
+const ENDPOINT = "https://query.wikidata.org/sparql";
+const USER_AGENT = "Historiegissare-import/1.0 (https://github.com/SusSibelius/CL_HISTORY)";
+const TARGET = Number(process.argv[2]) || 2000;
+const MIN_FAME = 40;          // only consider people with at least this many sitelinks
+const BATCH = 150;            // people per detail query
+
+// ---------- Wikidata ----------
+
+async function sparql(query, attempt = 1) {
+  const res = await fetch(ENDPOINT, {
+    method: "POST",
+    headers: {
+      "User-Agent": USER_AGENT,
+      Accept: "application/sparql-results+json",
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: "query=" + encodeURIComponent(query),
+  });
+  if (!res.ok) {
+    if (attempt < 4 && (res.status === 429 || res.status >= 500)) {
+      const wait = Number(res.headers.get("retry-after")) * 1000 || 5000 * attempt;
+      console.log(`  Wikidata answered ${res.status}, retrying in ${wait / 1000}s…`);
+      await new Promise((r) => setTimeout(r, wait));
+      return sparql(query, attempt + 1);
+    }
+    throw new Error(`Wikidata query failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+  }
+  return (await res.json()).results.bindings;
+}
+
+const qid = (uri) => uri.slice(uri.lastIndexOf("/") + 1);
+const val = (b, k) => (b[k] ? b[k].value : null);
+
+// Candidates: humans who have died, with coordinates for both places, ranked by fame.
+async function fetchCandidates() {
+  const rows = await sparql(`
+    SELECT ?p ?links WHERE {
+      ?p wikibase:sitelinks ?links . hint:Prior hint:rangeSafe true .
+      FILTER(?links >= ${MIN_FAME})
+      ?p wdt:P31 wd:Q5 ; wdt:P570 ?death ; wdt:P19/wdt:P625 ?bc ; wdt:P20/wdt:P625 ?dc .
+    }`);
+  const fame = new Map();
+  for (const r of rows) fame.set(qid(r.p.value), Number(r.links.value));
+  return [...fame.entries()].sort((a, b) => b[1] - a[1]).map(([id, links]) => ({ id, fame: links }));
+}
+
+async function fetchDetails(ids) {
+  const values = ids.map((id) => "wd:" + id).join(" ");
+  const main = await sparql(`
+    SELECT ?p ?label ?svLabel ?desc ?birth ?bprec ?death ?dprec
+           ?bpLabel ?bcoord ?bcLabel ?dpLabel ?dcoord ?dcLabel WHERE {
+      VALUES ?p { ${values} }
+      ?p rdfs:label ?label . FILTER(lang(?label) = "en")
+      OPTIONAL { ?p rdfs:label ?svLabel . FILTER(lang(?svLabel) = "sv") }
+      OPTIONAL { ?p schema:description ?desc . FILTER(lang(?desc) = "en") }
+      ?p wdt:P569 ?birth ; p:P569/psv:P569 [ wikibase:timeValue ?birth ; wikibase:timePrecision ?bprec ] .
+      ?p wdt:P570 ?death ; p:P570/psv:P570 [ wikibase:timeValue ?death ; wikibase:timePrecision ?dprec ] .
+      ?p wdt:P19 ?bp . ?bp wdt:P625 ?bcoord . OPTIONAL { ?bp wdt:P17 ?bc . }
+      ?p wdt:P20 ?dp . ?dp wdt:P625 ?dcoord . OPTIONAL { ?dp wdt:P17 ?dc . }
+      SERVICE wikibase:label { bd:serviceParam wikibase:language "en".
+        ?bp rdfs:label ?bpLabel . ?dp rdfs:label ?dpLabel . ?bc rdfs:label ?bcLabel . ?dc rdfs:label ?dcLabel . }
+    }`);
+  const alts = await sparql(`
+    SELECT ?p ?alt WHERE {
+      VALUES ?p { ${values} }
+      ?p skos:altLabel ?alt . FILTER(lang(?alt) = "en")
+    }`);
+  const jobs = await sparql(`
+    SELECT ?p ?jobLabel WHERE {
+      VALUES ?p { ${values} }
+      ?p wdt:P106 ?job .
+      SERVICE wikibase:label { bd:serviceParam wikibase:language "en". ?job rdfs:label ?jobLabel . }
+    }`);
+
+  const byId = new Map();
+  for (const r of main) {
+    const id = qid(r.p.value);
+    if (!byId.has(id)) byId.set(id, { id, rows: [], alts: [], jobs: [] });
+    byId.get(id).rows.push(r);
+  }
+  for (const r of alts) byId.get(qid(r.p.value))?.alts.push(val(r, "alt"));
+  for (const r of jobs) byId.get(qid(r.p.value))?.jobs.push(val(r, "jobLabel"));
+  return byId;
+}
+
+// ---------- Cleaning ----------
+
+// Wikidata writes 44 BC as year -43 (there is a year 0); we store -44.
+function year(iso) {
+  const m = /^([+-]?)(\d+)-/.exec(iso || "");
+  if (!m) return null;
+  const y = Number(m[2]) * (m[1] === "-" ? -1 : 1);
+  return y <= 0 ? y - 1 : y;
+}
+
+function point(wkt) {
+  const m = /Point\(([-\d.eE]+) ([-\d.eE]+)\)/.exec(wkt || "");
+  if (!m) return null;
+  const lng = Number(m[1]), lat = Number(m[2]);
+  if (!(Math.abs(lat) <= 90 && Math.abs(lng) <= 180)) return null;
+  return { lat: Math.round(lat * 1e4) / 1e4, lng: Math.round(lng * 1e4) / 1e4 };
+}
+
+const isQid = (s) => !s || /^Q\d+$/.test(s);
+
+function placeName(place, country) {
+  if (isQid(place)) return isQid(country) ? null : country;
+  if (isQid(country) || place === country || place.includes(country)) return place;
+  return `${place}, ${country}`;
+}
+
+// Names must be written in the Latin alphabet (accents are fine).
+const latin = (s) => /^[\p{Script=Latin}\p{M}\d .,'’()-]+$/u.test(s);
+
+// A hint must not give away the name, and must not contain the years.
+function makeHint(desc, jobs, name) {
+  let h = (desc || "").replace(/\([^)]*\)/g, " ");
+  h = h.replace(/\b(c\.|ca\.|circa|born|died|fl\.)?\s*\d{1,4}(s|\s*(BC|BCE|AD|CE))?\b/gi, " ");
+  h = h.replace(/[–—-]\s*(?=[,;]|$)/g, " ").replace(/\s+,/g, ",").replace(/\s+/g, " ").trim();
+  h = h.replace(/^[,;:\s-]+|[,;:\s-]+$/g, "");
+  if (h.length < 4 && jobs.length) h = [...new Set(jobs)].filter((j) => !isQid(j)).slice(0, 2).join(", ");
+  if (!h) return "No description available";
+  const nameWords = new Set(words(normalize(name)).filter((w) => w.length >= 4));
+  h = h.split(" ").map((w) => (nameWords.has(normalize(w)) ? "…" : w)).join(" ");
+  return h.charAt(0).toUpperCase() + h.slice(1);
+}
+
+function toPerson(d, fame) {
+  const r = d.rows[0];
+  const name = val(r, "label").replace(/\s*\([^)]*\)\s*$/, "").trim();
+  if (!latin(name)) return { skip: "name not in Latin alphabet" };
+
+  const bPrec = Math.max(...d.rows.map((x) => Number(val(x, "bprec"))));
+  const dPrec = Math.max(...d.rows.map((x) => Number(val(x, "dprec"))));
+  if (bPrec < 9 || dPrec < 9) return { skip: "birth/death year not known exactly" };
+  const born = year(val(r, "birth")), died = year(val(r, "death"));
+  if (born == null || died == null || died < born || died - born > 110) return { skip: "implausible dates" };
+
+  const bc = point(val(r, "bcoord")), dc = point(val(r, "dcoord"));
+  const bPlace = placeName(val(r, "bpLabel"), val(r, "bcLabel"));
+  const dPlace = placeName(val(r, "dpLabel"), val(r, "dcLabel"));
+  if (!bc || !dc || !bPlace || !dPlace) return { skip: "missing place" };
+
+  // Accepted answers: English and Swedish names, and English aliases that are
+  // full names (at least two words, unless the person is known by one name).
+  const oneWord = words(normalize(name)).length === 1;
+  const answers = [];
+  for (const a of [name, val(r, "svLabel"), ...d.alts]) {
+    if (!a || !latin(a) || a.length > 40) continue;
+    const n = normalize(a.replace(/\([^)]*\)/g, ""));
+    if (!n || (!oneWord && words(n).length < 2) || answers.includes(n)) continue;
+    answers.push(n);
+  }
+
+  return {
+    person: {
+      name,
+      answers,
+      hint: makeHint(val(r, "desc"), d.jobs, name),
+      fame,
+      wikidata: d.id,
+      born: { year: born, ...bc, place: bPlace },
+      died: { year: died, ...dc, place: dPlace },
+    },
+  };
+}
+
+// ---------- Ambiguity check ----------
+
+// Two people must never be guessable with the same answer (typos included).
+// Aliases that clash are dropped; if the main names clash, the less famous
+// person is dropped.
+function resolveClashes(people) {
+  const keys = (p) => [normalize(p.name), ...p.answers];
+  const compact = (s) => s.replace(/ /g, "");
+  const dropped = [];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const all = [];
+    people.forEach((p, i) => keys(p).forEach((a) => all.push({ i, a, len: compact(a).length })));
+    all.sort((x, y) => x.len - y.len);
+    for (let x = 0; x < all.length && !changed; x++) {
+      for (let y = x + 1; y < all.length && all[y].len - all[x].len <= 2; y++) {
+        const A = all[x], B = all[y];
+        if (A.i === B.i) continue;
+        if (!answerMatches(A.a, B.a) && !answerMatches(B.a, A.a)) continue;
+        const [pa, pb] = [people[A.i], people[B.i]];
+        const aMain = A.a === normalize(pa.name), bMain = B.a === normalize(pb.name);
+        if (!aMain && !pa.curated) pa.answers = pa.answers.filter((s) => s !== A.a);
+        else if (!bMain && !pb.curated) pb.answers = pb.answers.filter((s) => s !== B.a);
+        else {
+          const loser = pa.curated ? B.i : pb.curated ? A.i : pa.fame >= pb.fame ? B.i : A.i;
+          dropped.push(`${people[loser].name} (clashes with ${people[loser === A.i ? B.i : A.i].name})`);
+          people.splice(loser, 1);
+        }
+        changed = true;
+        break;
+      }
+    }
+  }
+  return dropped;
+}
+
+// ---------- Main ----------
+
+async function main() {
+  console.log("Finding candidates on Wikidata…");
+  const candidates = await fetchCandidates();
+  console.log(`  ${candidates.length} people with at least ${MIN_FAME} sitelinks`);
+
+  const curatedByName = new Map(CURATED.map((p) => [normalize(p.name), p]));
+  const people = [];
+  const skipped = {};
+  const seenCurated = new Set();
+
+  for (let start = 0; start < candidates.length && people.length < TARGET * 1.05; start += BATCH) {
+    const chunk = candidates.slice(start, start + BATCH);
+    process.stdout.write(`Fetching details ${start + 1}–${start + chunk.length}…`);
+    const details = await fetchDetails(chunk.map((c) => c.id));
+    for (const c of chunk) {
+      const d = details.get(c.id);
+      if (!d) { skipped["no English name"] = (skipped["no English name"] || 0) + 1; continue; }
+      const cur = curatedByName.get(normalize(val(d.rows[0], "label")));
+      if (cur) {
+        seenCurated.add(cur.name);
+        people.push({ ...cur, fame: c.fame, wikidata: c.id, curated: true });
+        continue;
+      }
+      const r = toPerson(d, c.fame);
+      if (r.skip) skipped[r.skip] = (skipped[r.skip] || 0) + 1;
+      else people.push(r.person);
+    }
+    console.log(` ${people.length} kept`);
+  }
+
+  // Curated people Wikidata didn't return stay in with a high fame.
+  for (const p of CURATED) {
+    if (!seenCurated.has(p.name)) people.push({ ...p, fame: 200, curated: true });
+  }
+
+  console.log("Checking that no two people can be confused…");
+  const dropped = resolveClashes(people);
+  people.sort((a, b) => b.fame - a.fame);
+  // The most famous TARGET people, plus any curated person below the cut.
+  const out = people.filter((p, i) => i < TARGET || p.curated).map(({ curated, ...p }) => p);
+  const header = `// Generated by scripts/import-wikidata.js from Wikidata (CC0) on ${new Date().toISOString().slice(0, 10)}
+// — don't edit by hand: change scripts/curated.js or the import script and re-run it.
+// ${out.length} people, most famous first. fame = number of Wikipedia/sister-project
+// language editions with an article; the game uses it to order runs from easy to hard.
+`;
+  const body = "const PEOPLE = [\n" + out.map((p) => "  " + JSON.stringify(p)).join(",\n") + "\n];\n";
+  fs.writeFileSync(path.join(__dirname, "..", "data.js"), header + body);
+
+  console.log(`\nWrote data.js with ${out.length} people (fame ${out[0].fame} … ${out[out.length - 1].fame}).`);
+  console.log("Skipped:", skipped);
+  if (dropped.length) console.log(`Dropped ${dropped.length} for name clashes:\n  ` + dropped.join("\n  "));
+}
+
+main().catch((e) => { console.error(e); process.exit(1); });

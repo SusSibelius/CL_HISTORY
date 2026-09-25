@@ -29,6 +29,10 @@ create table if not exists public.people (
   died_lng    float8  not null,
   died_place  text    not null
 );
+-- How famous the person is (number of Wikipedia/sister-project language
+-- editions with an article, from Wikidata). Runs go from famous to obscure.
+alter table public.people add column if not exists fame int not null default 0;
+alter table public.people add column if not exists wikidata text;
 
 -- One row per device per day. It is created when the player first opens the
 -- game that day, gets the name the player picks, and becomes a run when started.
@@ -134,6 +138,12 @@ begin
 end
 $$;
 
+-- Words that must be typed exactly: numbers and Roman numerals.
+create or replace function hg_private.exact_word() returns text
+language sql immutable as $$
+  select '^([0-9]+|m{0,3}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3}))$'
+$$;
+
 -- Does a (normalized) guess match a (normalized) accepted answer, allowing
 -- small typos? Compared word by word: words of 1–2 letters must be exact,
 -- 3–6 letters may have 1 typo, longer words 2. If the spacing differs
@@ -150,23 +160,36 @@ begin
   if g = '' then return false; end if;
   if array_length(gw, 1) = array_length(aw, 1) then
     for i in 1..array_length(aw, 1) loop
-      allowed := case when char_length(aw[i]) <= 2 then 0 when char_length(aw[i]) <= 6 then 1 else 2 end;
+      -- Roman numerals and numbers must be exact (Louis XIV isn't Louis XV).
+      allowed := case when char_length(aw[i]) <= 2 or aw[i] ~ hg_private.exact_word() then 0
+                      when char_length(aw[i]) <= 6 then 1 else 2 end;
       if hg_private.typo_distance(gw[i], aw[i]) > allowed then
         return false;
       end if;
     end loop;
     return true;
   end if;
+  if exists (select 1 from unnest(aw) w where w ~ hg_private.exact_word()) then return false; end if;
   return hg_private.typo_distance(replace(g, ' ', ''), replace(a, ' ', '')) <= 1;
 end
 $$;
 
--- Today's shuffled order is the same for every player: sort by a hash of the
--- day and the person id.
+-- A number in [0, 1) from a hash of the text: the same for everyone on a day.
+create or replace function hg_private.unit_hash(t text) returns float8
+language sql immutable as $$
+  select ('x' || substr(md5(t), 1, 8))::bit(32)::bigint / 4294967296.0
+$$;
+
+-- Today's order, the same for every player. Runs go from famous to obscure:
+-- people are ranked by fame, and each day every rank gets a random nudge of up
+-- to about 3x either way (the log of the rank moves by at most ±1.2). So a
+-- top-10 person can show up anywhere in the first ~30, but someone ranked
+-- 1000th never shows up early.
 create or replace function hg_private.person_at(p_day date, p_pos int) returns public.people
 language sql stable as $$
   select p.* from public.people p
-  order by md5(p_day::text || ':' || p.id::text)
+  join (select id, row_number() over (order by fame desc, id) as rk from public.people) r on r.id = p.id
+  order by ln(r.rk) + 2.4 * (hg_private.unit_hash(p_day::text || ':' || p.id::text) - 0.5), p.id
   offset p_pos limit 1
 $$;
 

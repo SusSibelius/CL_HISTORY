@@ -48,11 +48,16 @@
     }
   ).addTo(map);
 
+  // Years before 1 AD are stored as negative numbers.
+  function formatYear(year) {
+    return year < 0 ? `${-year} BC` : String(year);
+  }
+
   function makeIcon(year, kind) {
     return L.divIcon({
       className: "",
       html: `<div class="map-marker">
-               <div class="marker-year ${kind}">${year}</div>
+               <div class="marker-year ${kind}">${formatYear(year)}</div>
                <div class="marker-pin ${kind}"></div>
              </div>`,
       iconSize: [70, 56],
@@ -298,7 +303,7 @@
       html += a
         ? `<p class="card-lead ${extra.perfect ? "good" : "bad"}">${extra.perfect ? "Perfect run — you named everyone!" : "Run over — it was"}</p>
            ${extra.perfect ? "" : `<h1>${escapeHtml(a.name)}</h1>
-           <p class="card-sub">Born ${a.born.year} in ${escapeHtml(a.born.place)}, died ${a.died.year} in ${escapeHtml(a.died.place)}.</p>`}`
+           <p class="card-sub">Born ${formatYear(a.born.year)} in ${escapeHtml(a.born.place)}, died ${formatYear(a.died.year)} in ${escapeHtml(a.died.place)}.</p>`}`
         : `<p class="card-lead">You've played today, ${escapeHtml(s.username)}</p>`;
       html += `
         <div class="card-stats">
