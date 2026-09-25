@@ -5,10 +5,15 @@
 (function (root) {
   "use strict";
 
+  // Letters that aren't "accented" in Unicode terms but should still read as
+  // plain letters (like the server's unaccent does): Skłodowska → sklodowska.
+  const SPECIAL = { "ł": "l", "ø": "o", "æ": "ae", "œ": "oe", "ß": "ss", "đ": "d", "ð": "d", "þ": "th", "ı": "i", "ħ": "h" };
+
   // Lowercase, strip accents and punctuation, collapse spaces.
   function normalize(str) {
     return String(str || "")
       .toLowerCase()
+      .replace(/[łøæœßđðþıħ]/g, (c) => SPECIAL[c])
       .normalize("NFD")
       .replace(/[̀-ͯ]/g, "")
       .replace(/[^a-z0-9\s]/g, "")

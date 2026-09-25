@@ -75,7 +75,7 @@ To refresh or grow the list:
 2. `node scripts/build-seed.js` — writes `supabase/seed-1.sql`, `seed-2.sql`, … (500 people each).
 3. Run `supabase/schema.sql` (if it changed) and then every seed file in the Supabase SQL editor.
 
-**Hand-written entries:** people in `scripts/curated.js` are kept exactly as written there (hint, accepted answers, places); only their fame comes from Wikidata. Add someone there to override what Wikidata says, or to add a person Wikidata doesn't cover.
+Everyone comes straight from Wikidata. The last seed file also removes people who are no longer in the list, so the database always matches `data.js`.
 
 ## Files
 
@@ -89,7 +89,6 @@ To refresh or grow the list:
 - `supabase/schema.sql` — tables and the game's server functions
 - `supabase/seed-*.sql` — the people, generated from `data.js`
 - `scripts/import-wikidata.js` — builds `data.js` from Wikidata
-- `scripts/curated.js` — hand-written people that override Wikidata
 - `scripts/build-seed.js` — regenerates the seed files
 
 After changing `style.css`, `config.js`, `api.js`, `game.js` or `data.js`, bump the `?v=` number on their links in `index.html` (and the `data.js?v=` in `api.js`), so browsers don't mix old and new files.
