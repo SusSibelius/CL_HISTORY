@@ -24,9 +24,6 @@
         <span class="streak-num" id="streakNum">0</span>
         <span class="streak-label">streak</span>
       </div>
-      <button class="lifeline-btn" id="lifelineBtn" type="button">
-        💡 Hint
-      </button>
     </div>
   </header>
 
@@ -34,8 +31,6 @@
     <span class="legend-item"><i class="dot born"></i>Born</span>
     <span class="legend-item"><i class="dot died"></i>Died</span>
   </div>
-
-  <div class="hint-toast" id="hintToast" hidden></div>
 
   <main class="guess-capsule" id="guessCapsule">
     <form id="guessForm" autocomplete="off">
@@ -49,6 +44,7 @@
         />
         <div class="suggestions" id="suggestions" hidden></div>
       </div>
+      <button class="hint-btn" id="lifelineBtn" type="button" title="Hint (one per run)" aria-label="Use hint (one per run)">💡</button>
       <button type="submit" class="guess-submit">Guess</button>
     </form>
     <p class="feedback" id="feedback" aria-live="polite"></p>
