@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Historiegissare — guess the person</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div id="map"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      Historiegissare
+    </div>
+    <div class="topbar-right">
+      <div class="streak" title="Current streak">
+        <span class="streak-num" id="streakNum">0</span>
+        <span class="streak-label">streak</span>
+      </div>
+      <button class="lifeline-btn" id="lifelineBtn" type="button">
+        💡 Hint
+      </button>
+    </div>
+  </header>
+
+  <div class="legend">
+    <span class="legend-item"><i class="dot born"></i>Born</span>
+    <span class="legend-item"><i class="dot died"></i>Died</span>
+  </div>
+
+  <div class="hint-toast" id="hintToast" hidden></div>
+
+  <main class="guess-capsule" id="guessCapsule">
+    <form id="guessForm" autocomplete="off">
+      <div class="guess-field">
+        <input
+          type="text"
+          id="guessInput"
+          placeholder="Who is this?"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <div class="suggestions" id="suggestions" hidden></div>
+      </div>
+      <button type="submit" class="guess-submit">Guess</button>
+    </form>
+    <p class="feedback" id="feedback" aria-live="polite"></p>
+  </main>
+
+  <div class="overlay" id="gameOverOverlay" style="display:none;">
+    <div class="overlay-card">
+      <p class="overlay-eyebrow">Run over</p>
+      <h1 id="overlayAnswer">—</h1>
+      <p class="overlay-sub" id="overlaySub"></p>
+      <div class="overlay-stats">
+        <div>
+          <span class="overlay-stat-num" id="finalStreak">0</span>
+          <span class="overlay-stat-label">this run</span>
+        </div>
+        <div>
+          <span class="overlay-stat-num" id="bestStreak">0</span>
+          <span class="overlay-stat-label">best</span>
+        </div>
+      </div>
+      <button class="play-again" id="playAgainBtn" type="button">Play again</button>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="data.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
