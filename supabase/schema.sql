@@ -292,7 +292,7 @@ create or replace function public.hg_today(p_device uuid) returns json
 language plpgsql volatile security definer set search_path = public, pg_temp as $$
 declare r public.runs;
 begin
-  if p_device is null then raise exception 'device required'; end if;
+  if p_device is null then raise exception 'Enhets-id saknas'; end if;
   insert into public.runs (day, device_id)
   values (hg_private.today(), p_device)
   on conflict (day, device_id) do nothing;
@@ -314,20 +314,20 @@ declare
 begin
   if char_length(n) < 2 or char_length(n) > 24
      or lower(extensions.unaccent(n)) !~ '^[a-z0-9 ._''-]+$' or n !~ '[[:alnum:]]' then
-    raise exception 'Use 2–24 characters: letters, numbers, spaces and . _ '' -';
+    raise exception 'Använd 2–24 tecken: bokstäver, siffror, mellanslag och . _ '' -';
   end if;
   if hg_private.name_blocked(n) then
-    raise exception 'That name isn''t allowed — please choose another';
+    raise exception 'Det namnet är inte tillåtet – välj ett annat';
   end if;
   perform public.hg_today(p_device);
   if exists (select 1 from public.runs
              where day = hg_private.today() and device_id <> p_device and lower(username) = lower(n)) then
-    raise exception 'Someone already has that name today — try another';
+    raise exception 'Någon har redan det namnet idag – välj ett annat';
   end if;
   update public.runs set username = n
   where day = hg_private.today() and device_id = p_device and started_at is null
   returning * into r;
-  if r.id is null then raise exception 'run already started'; end if;
+  if r.id is null then raise exception 'Rundan har redan startat'; end if;
   return hg_private.state(r);
 end
 $$;
@@ -339,7 +339,7 @@ begin
   perform public.hg_today(p_device);
   if exists (select 1 from public.runs where day = hg_private.today() and device_id = p_device
              and started_at is null and username is null) then
-    raise exception 'Choose a name first';
+    raise exception 'Välj ett namn först';
   end if;
   update public.runs set started_at = now()
   where day = hg_private.today() and device_id = p_device and started_at is null;
@@ -356,16 +356,18 @@ declare
   total int := (select count(*) from public.people);
   ok boolean;
 begin
-  if r.id is null then raise exception 'no run in progress'; end if;
+  if r.id is null then raise exception 'Ingen runda pågår'; end if;
   select * into r from public.runs where id = r.id for update;
-  if r.finished_at is not null then raise exception 'no run in progress'; end if;
+  if r.finished_at is not null then raise exception 'Ingen runda pågår'; end if;
 
   p := hg_private.person_at(r.day, r.score);
 
-  -- First and last name are required. A one-word guess doesn't count as a
-  -- wrong answer (and isn't checked, so it doesn't reveal anything).
+  -- First and last name are required (unless the person is known by a single
+  -- name, like Konfucius). A one-word guess doesn't count as a wrong answer
+  -- (and isn't checked, so it doesn't reveal anything).
   if array_length(regexp_split_to_array(hg_private.norm(p_guess), '\s+'), 1) < 2
-     and array_length(regexp_split_to_array(hg_private.norm(p.name), '\s+'), 1) >= 2 then
+     and not exists (select 1 from unnest(p.answers || p.name) a
+                     where array_length(regexp_split_to_array(hg_private.norm(a), '\s+'), 1) = 1) then
     return json_build_object('needs_full_name', true, 'state', hg_private.state(r));
   end if;
 
@@ -393,8 +395,8 @@ create or replace function public.hg_hint(p_device uuid) returns json
 language plpgsql volatile security definer set search_path = public, pg_temp as $$
 declare r public.runs := hg_private.active_run(p_device);
 begin
-  if r.id is null then raise exception 'no run in progress'; end if;
-  if r.hint_used then raise exception 'hint already used'; end if;
+  if r.id is null then raise exception 'Ingen runda pågår'; end if;
+  if r.hint_used then raise exception 'Ledtråden är redan använd'; end if;
   update public.runs set hint_used = true where id = r.id;
   return json_build_object('hint', (hg_private.person_at(r.day, r.score)).hint);
 end

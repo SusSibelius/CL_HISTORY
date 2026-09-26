@@ -25,6 +25,8 @@ The site itself is fully static. The shared leaderboard needs a free Supabase pr
 
 ## How the game works
 
+The game is in Swedish: all text, and the people's names, hints and places come from Wikidata in Swedish where available (English otherwise). Both the Swedish and the English name are accepted as answers.
+
 It's a **daily challenge**: everyone gets one run per day with the same people in the same order, and competes on a shared leaderboard.
 
 - Before your run you type the name you'll appear under on the leaderboard. Names are 2–24 characters (Latin letters incl. accents, numbers, spaces and `. _ ' -`), unique per day, and checked against a word filter. Your name is remembered for the next days. No login needed.

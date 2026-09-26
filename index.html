@@ -1,16 +1,17 @@
 <!doctype html>
-<html lang="en">
+<html lang="sv">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<title>Historiegissare — the daily history guessing game</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Historiegissare – det dagliga historiespelet</title>
 
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=12">
+<link rel="stylesheet" href="style.css?v=13">
 </head>
 <body>
+<div id="app">
 
   <div id="map"></div>
 
@@ -20,17 +21,17 @@
       <span class="brand-text">Historiegissare</span>
     </div>
     <div class="topbar-right">
-      <div class="player-chip" id="playerChip" title="Your name for today's run" hidden></div>
-      <div class="streak" title="Current streak">
+      <div class="player-chip" id="playerChip" title="Ditt namn i dagens runda" hidden></div>
+      <div class="streak" title="Antal rätt i rad">
         <span class="streak-num" id="streakNum">0</span>
-        <span class="streak-label">streak</span>
+        <span class="streak-label">i rad</span>
       </div>
     </div>
   </header>
 
   <div class="legend">
-    <span class="legend-item"><i class="dot born"></i>Born</span>
-    <span class="legend-item"><i class="dot died"></i>Died</span>
+    <span class="legend-item"><i class="dot born"></i>Född</span>
+    <span class="legend-item"><i class="dot died"></i>Död</span>
   </div>
 
   <main class="guess-capsule" id="guessCapsule">
@@ -39,15 +40,15 @@
         <input
           type="text"
           id="guessInput"
-          placeholder="First and last name"
+          placeholder="För- och efternamn"
           aria-describedby="feedback"
           autocomplete="off"
           spellcheck="false"
           disabled
         />
       </div>
-      <button class="hint-btn" id="lifelineBtn" type="button" title="Hint (one per run)" aria-label="Use hint (one per run)">💡</button>
-      <button type="submit" class="guess-submit">Guess</button>
+      <button class="hint-btn" id="lifelineBtn" type="button" title="Ledtråd (en per runda)" aria-label="Använd ledtråd (en per runda)">💡</button>
+      <button type="submit" class="guess-submit">Gissa</button>
     </form>
     <p class="feedback" id="feedback" aria-live="polite"></p>
   </main>
@@ -56,10 +57,12 @@
     <div class="overlay-card" id="dailyCard" aria-live="polite"></div>
   </div>
 
+</div>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script src="config.js?v=5"></script>
-  <script src="match.js?v=12"></script>
-  <script src="api.js?v=12"></script>
-  <script src="game.js?v=12"></script>
+  <script src="config.js?v=13"></script>
+  <script src="match.js?v=13"></script>
+  <script src="api.js?v=13"></script>
+  <script src="game.js?v=13"></script>
 </body>
 </html>

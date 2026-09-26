@@ -17,7 +17,11 @@
 
 * { box-sizing: border-box; }
 
+/* The page itself never moves or scrolls (no dragging, bouncing or zooming
+   on phones). */
 html, body {
+  position: fixed;
+  inset: 0;
   height: 100%;
   margin: 0;
   overflow: hidden;
@@ -25,16 +29,24 @@ html, body {
   color: var(--ink);
   font-family: "Inter", system-ui, sans-serif;
   overscroll-behavior: none;
+  touch-action: none;
+  -webkit-text-size-adjust: 100%;
 }
 
-/* --vv-top / --vv-height / --keyboard: the part of the screen not covered by
-   the on-screen keyboard (set by game.js). */
-#map {
+/* Everything the player sees. game.js sizes it to the part of the screen not
+   covered by a phone keyboard, so the children below are placed within it. */
+#app {
   position: fixed;
   left: 0;
-  right: 0;
-  top: var(--vv-top, 0px);
-  height: var(--vv-height, 100%);
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+#map {
+  position: absolute;
+  inset: 0;
   background: var(--paper);
 }
 
@@ -47,8 +59,8 @@ html, body {
 
 /* ---------- Top bar ---------- */
 .topbar {
-  position: fixed;
-  top: var(--vv-top, 0px);
+  position: absolute;
+  top: 0;
   left: 0;
   right: 0;
   z-index: 500;
@@ -124,7 +136,7 @@ html, body {
 
 /* ---------- Legend ---------- */
 .legend {
-  position: fixed;
+  position: absolute;
   top: calc(78px + env(safe-area-inset-top, 0px));
   left: 20px;
   z-index: 400;
@@ -185,9 +197,9 @@ html, body {
 
 /* ---------- Guess capsule ---------- */
 .guess-capsule {
-  position: fixed;
+  position: absolute;
   left: 50%;
-  bottom: calc(var(--keyboard, 0px) + 24px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   transform: translateX(-50%);
   z-index: 500;
   width: min(440px, calc(100vw - 32px));
@@ -216,7 +228,7 @@ html, body {
   border-radius: 12px;
   padding: 12px 14px;
   font-family: "Inter", sans-serif;
-  font-size: 15px;
+  font-size: 16px; /* 16px or more: iPhones don't zoom the page when you tap it */
   color: var(--ink);
   outline: none;
   transition: background 0.15s ease, box-shadow 0.15s ease;
@@ -291,7 +303,7 @@ html, body {
 
 /* ---------- Daily card overlay ---------- */
 .overlay {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 900;
   display: flex;
@@ -311,8 +323,10 @@ html, body {
 }
 .overlay-card {
   width: min(400px, 100%);
-  max-height: calc(100dvh - 32px);
+  max-height: 100%;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
   background: var(--paper);
   border-radius: 22px;
   padding: 28px 26px 24px;
@@ -502,14 +516,54 @@ label.card-lead { display: block; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 560px) {
-  .brand-text { display: none; }
-  .player-chip { max-width: 56vw; }
-  .legend { top: auto; bottom: calc(96px + env(safe-area-inset-bottom, 0px)); left: 16px; }
-  .guess-capsule { width: calc(100vw - 24px); bottom: calc(var(--keyboard, 0px) + 16px + env(safe-area-inset-bottom, 0px)); }
+  /* Title, name and streak side by side; the name shortens with … if needed. */
+  .topbar { padding: env(safe-area-inset-top, 0px) 14px 0 14px; height: calc(56px + env(safe-area-inset-top, 0px)); }
+  .brand { font-size: 16px; gap: 7px; flex: none; }
+  .topbar-right { gap: 8px; min-width: 0; }
+  .player-chip { max-width: 30vw; padding: 7px 11px; font-size: 12px; }
+  .streak { padding: 5px 11px; }
+  .legend { top: calc(62px + env(safe-area-inset-top, 0px)); left: 14px; padding: 5px 10px; gap: 10px; font-size: 11px; }
+  .guess-capsule { width: calc(100% - 24px); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
   /* While typing: more room for the map. */
   .keyboard-open .legend { display: none; }
-  .keyboard-open .guess-capsule { bottom: calc(var(--keyboard, 0px) + 8px); }
+  .keyboard-open .guess-capsule { bottom: 8px; }
+  .keyboard-open .feedback { margin-top: 6px; }
 }
+@media (max-width: 350px) {
+  .player-chip { display: none; }
+}
+
+/* The guess that ended the run, next to the right answer. */
+.guess-compare {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 12px;
+  text-align: left;
+}
+.guess-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 12px;
+}
+.guess-row span {
+  flex: none;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.guess-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+  font-family: "Fraunces", serif;
+  font-size: 18px;
+}
+.guess-row.wrong { background: rgba(178, 58, 58, 0.09); }
+.guess-row.wrong strong { color: var(--wrong); text-decoration: line-through; text-decoration-thickness: 1.5px; }
+.guess-row.right { background: var(--born-soft); }
+.guess-row.right strong { color: var(--born); }
 
 @media (prefers-reduced-motion: reduce) {
   .map-marker, .overlay, .feedback.hint { animation: none !important; }
