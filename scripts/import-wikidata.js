@@ -84,7 +84,7 @@ async function fetchCandidates() {
 async function fetchDetails(ids) {
   const values = ids.map((id) => "wd:" + id).join(" ");
   const main = await sparql(`
-    SELECT ?p ?label ?svLabel ?desc ?birth ?bprec ?death ?dprec
+    SELECT ?p ?label ?svLabel ?desc ?svDesc ?birth ?bprec ?death ?dprec
            ?bpLabel ?bcoord ?bcLabel ?baLabel ?dpLabel ?dcoord ?dcLabel ?daLabel WHERE {
       VALUES ?p { ${values} }
       # Many names are only stored under Wikidata's multilingual "mul" code now.
@@ -94,6 +94,7 @@ async function fetchDetails(ids) {
       FILTER(BOUND(?label))
       OPTIONAL { ?p rdfs:label ?svLabel . FILTER(lang(?svLabel) = "sv") }
       OPTIONAL { ?p schema:description ?desc . FILTER(lang(?desc) = "en") }
+      OPTIONAL { ?p schema:description ?svDesc . FILTER(lang(?svDesc) = "sv") }
       ?p wdt:P569 ?birth ; p:P569/psv:P569 [ wikibase:timeValue ?birth ; wikibase:timePrecision ?bprec ] .
       ?p wdt:P570 ?death ; p:P570/psv:P570 [ wikibase:timeValue ?death ; wikibase:timePrecision ?dprec ] .
       ?p wdt:P19 ?bp . OPTIONAL { ?bp wdt:P17 ?bc . } OPTIONAL { ?bp wdt:P131 ?ba . OPTIONAL { ?ba wdt:P625 ?bacoord } }
@@ -103,20 +104,20 @@ async function fetchDetails(ids) {
       BIND(COALESCE(?bpcoord, ?bacoord) AS ?bcoord)
       BIND(COALESCE(?dpcoord, ?dacoord) AS ?dcoord)
       FILTER(BOUND(?bcoord) && BOUND(?dcoord))
-      SERVICE wikibase:label { bd:serviceParam wikibase:language "en,mul".
+      SERVICE wikibase:label { bd:serviceParam wikibase:language "sv,en,mul".
         ?bp rdfs:label ?bpLabel . ?dp rdfs:label ?dpLabel . ?bc rdfs:label ?bcLabel . ?dc rdfs:label ?dcLabel .
         ?ba rdfs:label ?baLabel . ?da rdfs:label ?daLabel . }
     }`);
   const alts = await sparql(`
     SELECT ?p ?alt WHERE {
       VALUES ?p { ${values} }
-      ?p skos:altLabel ?alt . FILTER(lang(?alt) = "en" || lang(?alt) = "mul")
+      ?p skos:altLabel ?alt . FILTER(lang(?alt) = "en" || lang(?alt) = "mul" || lang(?alt) = "sv")
     }`);
   const jobs = await sparql(`
     SELECT ?p ?jobLabel WHERE {
       VALUES ?p { ${values} }
       ?p wdt:P106 ?job .
-      SERVICE wikibase:label { bd:serviceParam wikibase:language "en,mul". ?job rdfs:label ?jobLabel . }
+      SERVICE wikibase:label { bd:serviceParam wikibase:language "sv,en,mul". ?job rdfs:label ?jobLabel . }
     }`);
 
   const byId = new Map();
@@ -152,14 +153,14 @@ const isQid = (s) => !s || /^Q\d+$/.test(s);
 
 // Buildings and the like get the town they're in added, so the reveal reads
 // "UCLA Medical Center, Los Angeles, United States".
-const BUILDING = /\b(hospital|clinic|cl[ií]nica|medical|cent(er|re)|infirmary|sanatorium|palace|castle|abbey|monastery|convent|church|cathedral|house|hall|bunker|estate|manor|villa|hotel|prison|residence|apartment|farm|school|university|college|barracks|camp|ship|mansion|château|chateau|schloss|palazzo|tower|fortress|court|garden)\b/i;
+const BUILDING = /\b(sjukhus|klinik|slott|kloster|kyrka|katedral|palats|herrgård|gård|fängelse|borg|fästning|hotell|skola|universitet|läger|koncentrationsläger|hospital|clinic|cl[ií]nica|medical|cent(er|re)|infirmary|sanatorium|palace|castle|abbey|monastery|convent|church|cathedral|house|hall|bunker|estate|manor|villa|hotel|prison|residence|apartment|farm|school|university|college|barracks|camp|ship|mansion|château|chateau|schloss|palazzo|tower|fortress|court|garden)\b/i;
 
 function placeName(place, admin, country, personName) {
   if (isQid(place)) return isQid(country) ? null : country;
   // Street addresses and places named after the person ("Birthplace of
   // Ronald Reagan") are replaced by the town they're in.
   const nameWords = words(normalize(personName)).filter((w) => w.length >= 4);
-  if (/\d/.test(place) || /^(birthplace|home|house) of\b/i.test(place) ||
+  if (/\d/.test(place) || /^(birthplace|home|house) of\b/i.test(place) || /^(födelsehem|hem)\b/i.test(place) ||
       words(normalize(place)).some((w) => nameWords.includes(w))) {
     if (!isQid(admin)) place = admin;
     else if (/\d/.test(place) && !isQid(country)) return country;  // a bare street address
@@ -174,31 +175,45 @@ function placeName(place, admin, country, personName) {
 const latin = (s) => /^[\p{Script=Latin}\p{M}\d .,'’()-]+$/u.test(s);
 
 // A hint must not give away the name, and must not contain the years.
-function makeHint(desc, jobs, name) {
+// Descriptions are Swedish when Wikidata has one, otherwise English.
+function makeHint(desc, jobs, names) {
   let h = (desc || "").replace(/\([^)]*\)/g, " ");
   // Cut the description where the first year appears: "French Emperor 1804–1814
   // and again in 1815" → "French Emperor".
-  const firstYear = h.search(/\b(from |between |since |until |in |c\. |ca\. |circa )?\d{3,4}\b/i);
+  const firstYear = h.search(/\b(from |between |since |until |in |c\. |ca\. |circa |från |mellan |sedan |till |i |år |omkring )?\d{3,4}\b(?!:|th\b|st\b|nd\b|rd\b)/i);
   if (firstYear > 10) h = h.slice(0, firstYear);
-  h = h.replace(/\b(c\.|ca\.|circa|born|died|fl\.)?\s*\d{1,4}(s|\s*(BC|BCE|AD|CE))?\b/gi, " ");
+  h = h.replace(/\b(c\.|ca\.|circa|born|died|fl\.|född|död|omkring)?\s*\d{1,4}(s|\s*(BC|BCE|AD|CE|f\.\s?Kr\.?|e\.\s?Kr\.?))?(?![:\w])/gi, " ");
   h = h.replace(/[–—-]\s*(?=[,;]|$)/g, " ").replace(/\s+,/g, ",").replace(/\s+/g, " ").trim();
   // Words left dangling by removing the years ("ruler from to", "in the").
   for (let i = 0; i < 3; i++) {
-    h = h.replace(/\b(from|between|since|until|in|to|and|during)\s+(?=(to|and|until|,|;|$))/gi, "")
-      .replace(/\s+(from|between|since|until|to|and|in|of|the|during)\s*$/i, "")
+    h = h.replace(/\b(from|between|since|until|in|to|and|during|från|mellan|sedan|till|och|i|under|år)\s+(?=(to|and|until|till|och|,|;|$))/gi, "")
+      .replace(/\s+(from|between|since|until|to|and|in|of|the|during|från|mellan|sedan|till|och|i|av|under|år|som|den|det)\s*$/i, "")
       .replace(/\s+,/g, ",").replace(/\s+/g, " ").trim();
   }
   h = h.replace(/^[,;:\s-]+|[,;:\s-]+$/g, "");
   if (h.length < 4 && jobs.length) h = [...new Set(jobs)].filter((j) => !isQid(j)).slice(0, 2).join(", ");
-  if (!h) return "No description available";
-  const nameWords = new Set(words(normalize(name)).filter((w) => w.length >= 4));
+  if (!h) return "Ingen beskrivning finns";
+  const nameWords = new Set(names.filter(Boolean).flatMap((n) => words(normalize(n))).filter((w) => w.length >= 4));
   h = h.split(" ").map((w) => (nameWords.has(normalize(w)) ? "…" : w)).join(" ");
   return h.charAt(0).toUpperCase() + h.slice(1);
 }
 
+// Occupations as a Swedish hint ("Historiker, etnolog") when Wikidata has no
+// Swedish description. Labels that fell back to English are skipped.
+const ENGLISHY = /\b(the|and|of|er|ist|ian)\b|(ist|ian|er)$/i;
+function swedishJobs(jobs) {
+  const sv = [...new Set(jobs)].filter((j) => j && !isQid(j) && !ENGLISHY.test(j)).slice(0, 3);
+  return sv.length ? sv.join(", ") : null;
+}
+
 function toPerson(d, fame) {
   const r = d.rows[0];
-  const name = val(r, "label").replace(/\s*\([^)]*\)\s*$/, "").trim();
+  const clean = (s) => (s || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
+  const enName = clean(val(r, "label"));
+  const svLabel = clean(val(r, "svLabel"));
+  // The game shows the Swedish name when Wikidata has one (Karl den store,
+  // Gustav II Adolf); the English name is always accepted too.
+  const name = svLabel && latin(svLabel) ? svLabel : enName;
   if (!latin(name)) return { skip: "name not in Latin alphabet" };
 
   const bPrec = Math.max(...d.rows.map((x) => Number(val(x, "bprec"))));
@@ -212,21 +227,20 @@ function toPerson(d, fame) {
   const dPlace = placeName(val(r, "dpLabel"), val(r, "daLabel"), val(r, "dcLabel"), name);
   if (!bc || !dc || !bPlace || !dPlace) return { skip: "missing place" };
 
-  // Accepted answers: the English and Swedish names, plus English aliases that
-  // are full names (at least two words, unless the person is known by one name)
-  // and share a word with the English name — that keeps "M. K. Gandhi" and
+  // Accepted answers: the Swedish and English names, plus aliases that are
+  // full names (at least two words, unless the person is known by one name)
+  // and share a word with one of the names — that keeps "M. K. Gandhi" and
   // "Napoleon I" but drops nicknames ("Father of the Nation") and odd
   // transliterations from other languages.
   const oneWord = words(normalize(name)).length === 1;
-  const nameWords = words(normalize(name)).filter((w) => w.length >= 3);
+  const nameWords = [name, enName].flatMap((n) => words(normalize(n))).filter((w) => w.length >= 3);
   const sharesWord = (n) => words(n).some((w) => nameWords.some((l) => answerMatches(w, l)));
   const answers = [];
-  const svLabel = val(r, "svLabel");
-  for (const a of [name, svLabel, ...d.alts]) {
-    if (!a || !latin(a) || a.length > 40) continue;
+  for (const a of [name, enName, svLabel, ...d.alts]) {
+    if (!a || !latin(a) || a.length > 40 || /\d/.test(a)) continue;
     const n = normalize(a.replace(/\([^)]*\)/g, ""));
-    if (!n || (!oneWord && words(n).length < 2) || answers.includes(n)) continue;
-    if (a !== name && a !== svLabel && !sharesWord(n)) continue;
+    if (!n || (!oneWord && a !== enName && words(n).length < 2) || answers.includes(n)) continue;
+    if (a !== name && a !== enName && a !== svLabel && !sharesWord(n)) continue;
     answers.push(n);
   }
 
@@ -234,7 +248,7 @@ function toPerson(d, fame) {
     person: {
       name,
       answers,
-      hint: makeHint(val(r, "desc"), d.jobs, name),
+      hint: makeHint(val(r, "svDesc") || swedishJobs(d.jobs) || val(r, "desc"), d.jobs, [name, enName]),
       fame,
       wikidata: d.id,
       born: { year: born, ...bc, place: bPlace },

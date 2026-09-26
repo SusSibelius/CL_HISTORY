@@ -34,6 +34,10 @@
     boxZoom: false,
     keyboard: false,
     tap: false,
+    // Fractional zoom: the view can fit the pins tightly instead of jumping
+    // between whole zoom levels (which often left them small in the middle).
+    zoomSnap: 0.25,
+    zoomDelta: 0.25,
   }).setView([20, 0], 2);
 
   L.tileLayer(
@@ -53,7 +57,7 @@
 
   // Years before 1 AD are stored as negative numbers.
   function formatYear(year) {
-    return year < 0 ? `${-year} BC` : String(year);
+    return year < 0 ? `${-year} f.Kr.` : String(year);
   }
 
   function makeIcon(year, kind) {
@@ -86,7 +90,7 @@
     const dx = pd.x - pb.x;
     const dy = pd.y - pb.y;
 
-    // Labels differ in width ("1889" vs "551 BC"): keep their centres far enough apart.
+    // Labels differ in width ("1889" vs "551 f.Kr."): keep their centres far enough apart.
     const gap = Math.max(LABEL_GAP,
       (bornEl.querySelector(".marker-year").offsetWidth + diedEl.querySelector(".marker-year").offsetWidth) / 2 + 12);
     let shift = 0;
@@ -122,16 +126,20 @@
     }
     let padTop = Math.max(0, top - mapRect.top) + LABEL_ROOM;
     let padBottom = Math.max(0, mapRect.bottom - bottom) + 12;
-    // Very little room (small phone with the keyboard open): keep what we can.
-    if (mapRect.height - padTop - padBottom < 60) {
-      padTop = Math.max(0, top - mapRect.top) + 32;
-      padBottom = Math.max(0, mapRect.bottom - bottom) + 4;
+    // Never ask for more padding than the map has room for: Leaflet would then
+    // zoom right out or centre somewhere odd. Keep at least 80px for the pins.
+    const spare = mapRect.height - padTop - padBottom - 80;
+    if (spare < 0) {
+      const scale = Math.max(0, (padTop + padBottom + spare) / (padTop + padBottom));
+      padTop *= scale;
+      padBottom *= scale;
     }
-    const side = mapRect.width < 500 ? 28 : 40;
+    const side = mapRect.width < 500 ? 36 : 48; // room for the year labels
+    if (!mapRect.width || !mapRect.height) return; // not laid out yet
     map.fitBounds(bounds, {
       paddingTopLeft: [side, padTop],
       paddingBottomRight: [side, padBottom],
-      maxZoom: 6,
+      maxZoom: 7,
       animate: false,
     });
     // Single-point bounds (born == died) collapse to a point; give it a sane zoom.
@@ -140,16 +148,6 @@
     }
   }
 
-  function normalize(str) {
-    return str
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9\s]/g, "")
-      .trim();
-  }
-
-
   function escapeHtml(str) {
     return String(str).replace(/[&<>"']/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
@@ -157,13 +155,13 @@
   }
 
   function formatDay(day) {
-    return new Date(day + "T00:00:00Z").toLocaleDateString(undefined, {
+    return new Date(day + "T00:00:00Z").toLocaleDateString("sv-SE", {
       weekday: "long", day: "numeric", month: "long", timeZone: "UTC",
     });
   }
 
   // ---------- Rounds ----------
-  const GUESS_TIP = "First and last name — small typos are OK.";
+  const GUESS_TIP = "För- och efternamn – små stavfel är okej.";
 
   function showTip() {
     feedbackEl.textContent = GUESS_TIP;
@@ -206,7 +204,7 @@
   }
 
   function showError(err) {
-    feedbackEl.textContent = `Couldn't reach the game server — ${err.message}`;
+    feedbackEl.textContent = `Kunde inte nå spelservern – ${err.message}`;
     feedbackEl.className = "feedback wrong";
   }
 
@@ -230,7 +228,7 @@
     state = res.state;
 
     if (res.needs_full_name) {
-      feedbackEl.textContent = "Type both first and last name.";
+      feedbackEl.textContent = "Skriv både för- och efternamn.";
       feedbackEl.className = "feedback wrong";
       accepting = true;
       guessInput.readOnly = false;
@@ -240,7 +238,7 @@
 
     if (res.correct) {
       setScore(state.score, true);
-      feedbackEl.textContent = `${res.answer.name} — correct.`;
+      feedbackEl.textContent = `${res.answer.name} – rätt!`;
       feedbackEl.className = "feedback correct";
       guessCapsule.classList.add("pulse-correct");
       setTimeout(() => guessCapsule.classList.remove("pulse-correct"), 550);
@@ -254,25 +252,27 @@
         setTimeout(() => showCard({ answer: res.answer, perfect: true }), 900);
       }
     } else {
-      feedbackEl.textContent = "Not quite.";
+      feedbackEl.textContent = "Fel svar.";
       feedbackEl.className = "feedback wrong";
-      setTimeout(() => showCard({ answer: res.answer }), 700);
+      const last = { day: state.day, guess: raw.trim(), answer: res.answer };
+      saveLastMiss(last);
+      setTimeout(() => showCard(last), 700);
     }
   }
 
   // ---------- Daily card ----------
   function leaderboardHtml(rows) {
     if (!api.online) {
-      return `<p class="board-note">Offline mode — connect Supabase in <code>config.js</code> to compete on a shared leaderboard.</p>`;
+      return `<p class="board-note">Offlineläge – koppla in Supabase i <code>config.js</code> för att tävla på en gemensam topplista.</p>`;
     }
     if (!rows.length) {
-      return `<p class="board-note">No one has played today yet. Be the first!</p>`;
+      return `<p class="board-note">Ingen har spelat idag än. Bli först!</p>`;
     }
     return `<ol class="board">${rows.map((r) => `
       <li class="${r.me ? "me" : ""}">
         <span class="board-rank">${r.rank}</span>
-        <span class="board-name">${escapeHtml(r.username)}${r.me ? " <em>(you)</em>" : ""}</span>
-        ${r.playing ? `<span class="board-live" title="Still playing">playing</span>` : ""}
+        <span class="board-name">${escapeHtml(r.username)}${r.me ? " <em>(du)</em>" : ""}</span>
+        ${r.playing ? `<span class="board-live" title="Spelar fortfarande">spelar</span>` : ""}
         <span class="board-score">${r.score}</span>
       </li>`).join("")}</ol>`;
   }
@@ -297,11 +297,11 @@
       rows = null;
     }
     const board = rows === null
-      ? `<p class="board-note">Couldn't load the leaderboard.</p>`
+      ? `<p class="board-note">Kunde inte ladda topplistan.</p>`
       : leaderboardHtml(rows);
 
     const s = state;
-    let html = `<p class="card-eyebrow">Daily run · ${escapeHtml(formatDay(s.day))}</p>`;
+    let html = `<p class="card-eyebrow">Dagens runda · ${escapeHtml(formatDay(s.day))}</p>`;
 
     if (s.status === "new") {
       setTimeout(() => {
@@ -309,37 +309,47 @@
         if (input && !input.value) input.focus();
       }, 50);
       html += `
-        <label class="card-lead" for="nameInput">Choose your name for today's run</label>
+        <label class="card-lead" for="nameInput">Välj ditt namn för dagens runda</label>
         <div class="card-name">
           <input class="name-input" id="nameInput" type="text" maxlength="24" autocomplete="nickname"
-                 spellcheck="false" placeholder="Your name" value="${escapeHtml(s.username || savedName())}" />
+                 spellcheck="false" placeholder="Ditt namn" value="${escapeHtml(s.username || savedName())}" />
         </div>
         <p class="name-error" id="nameError" role="alert"></p>
-        <p class="card-rules">You get <strong>one run per day</strong>. Everyone gets the same people in the same order. Name as many as you can in a row with <strong>first and last name</strong> (small typos are fine); one wrong guess ends the run. One 💡 hint per run.</p>
-        <button class="primary-btn" id="startBtn" type="button">Start today's run</button>`;
+        <p class="card-rules">Du får <strong>en runda per dag</strong>. Alla får samma personer i samma ordning. Nämn så många du kan i rad med <strong>för- och efternamn</strong> (små stavfel är okej) – en felgissning avslutar rundan. En 💡-ledtråd per runda.</p>
+        <button class="primary-btn" id="startBtn" type="button">Starta dagens runda</button>`;
     } else if (s.status === "playing") {
       html += `
-        <p class="card-lead">Your run is in progress</p>
+        <p class="card-lead">Din runda pågår</p>
         <h1>${escapeHtml(s.username)}</h1>
-        <p class="card-rules">You're on <strong>${s.score}</strong> in a row. Pick up where you left off.</p>
-        <button class="primary-btn" id="startBtn" type="button">Resume run</button>`;
+        <p class="card-rules">Du har <strong>${s.score}</strong> i rad. Fortsätt där du slutade.</p>
+        <button class="primary-btn" id="startBtn" type="button">Fortsätt rundan</button>`;
     } else {
-      const a = extra.answer;
+      // The miss that ended the run: just now, or remembered from earlier today.
+      const miss = extra.answer ? extra : (loadLastMiss(s.day) || {});
+      const a = miss.answer;
       const st = s.standing || { rank: 1, players: 1 };
-      html += a
-        ? `<p class="card-lead ${extra.perfect ? "good" : "bad"}">${extra.perfect ? "Perfect run — you named everyone!" : "Run over — it was"}</p>
-           ${extra.perfect ? "" : `<h1>${escapeHtml(a.name)}</h1>
-           <p class="card-sub">Born ${formatYear(a.born.year)} in ${escapeHtml(a.born.place)}, died ${formatYear(a.died.year)} in ${escapeHtml(a.died.place)}.</p>`}`
-        : `<p class="card-lead">You've played today, ${escapeHtml(s.username)}</p>`;
+      if (extra.perfect) {
+        html += `<p class="card-lead good">Perfekt runda – du kunde alla!</p>`;
+      } else if (a) {
+        html += `
+          <p class="card-lead bad">${extra.answer ? "Rundan är slut" : `Du har spelat idag, ${escapeHtml(s.username)}`}</p>
+          <div class="guess-compare">
+            ${miss.guess ? `<div class="guess-row wrong"><span>Du gissade</span><strong>${escapeHtml(miss.guess)}</strong></div>` : ""}
+            <div class="guess-row right"><span>Rätt svar</span><strong>${escapeHtml(a.name)}</strong></div>
+          </div>
+          <p class="card-sub">Född ${formatYear(a.born.year)} i ${escapeHtml(a.born.place)}, död ${formatYear(a.died.year)} i ${escapeHtml(a.died.place)}.</p>`;
+      } else {
+        html += `<p class="card-lead">Du har spelat idag, ${escapeHtml(s.username)}</p>`;
+      }
       html += `
         <div class="card-stats">
-          <div><span class="card-stat-num">${s.score}</span><span class="card-stat-label">in a row</span></div>
-          ${api.online ? `<div><span class="card-stat-num">#${st.rank}</span><span class="card-stat-label">of ${st.players} today</span></div>` : ""}
+          <div><span class="card-stat-num">${s.score}</span><span class="card-stat-label">i rad</span></div>
+          ${api.online ? `<div><span class="card-stat-num">#${st.rank}</span><span class="card-stat-label">av ${st.players} idag</span></div>` : ""}
         </div>
-        <p class="card-next">Next run in <strong id="countdown">${countdownText()}</strong></p>`;
+        <p class="card-next">Nästa runda om <strong id="countdown">${countdownText()}</strong></p>`;
     }
 
-    html += `<div class="card-board"><p class="board-title">Today's leaderboard</p>${board}</div>`;
+    html += `<div class="card-board"><p class="board-title">Dagens topplista</p>${board}</div>`;
     card.innerHTML = html;
     overlay.hidden = false;
 
@@ -364,6 +374,17 @@
     }
   }
 
+  // The guess that ended today's run, so the card can still show it after a reload.
+  function saveLastMiss(miss) {
+    try { localStorage.setItem("hg_last_miss", JSON.stringify(miss)); } catch (e) { /* private mode etc. */ }
+  }
+  function loadLastMiss(day) {
+    try {
+      const m = JSON.parse(localStorage.getItem("hg_last_miss") || "null");
+      return m && m.day === day ? m : null;
+    } catch (e) { return null; }
+  }
+
   // The player's name is remembered for the next days.
   function savedName() {
     try { return localStorage.getItem("hg_name") || ""; } catch (e) { return ""; }
@@ -382,7 +403,7 @@
       const errorEl = document.getElementById("nameError");
       const name = window.HG_cleanName(nameInput.value);
       if (!window.HG_validName(name)) {
-        errorEl.textContent = name ? window.HG_NAME_RULES : "Choose a name to start";
+        errorEl.textContent = name ? window.HG_NAME_RULES : "Välj ett namn för att starta";
         btn.disabled = false;
         nameInput.focus();
         return;
@@ -406,7 +427,7 @@
       state = await api.start();
     } catch (err) {
       btn.disabled = false;
-      btn.textContent = "Couldn't start — try again";
+      btn.textContent = "Kunde inte starta – försök igen";
       return;
     }
     overlay.hidden = true;
@@ -446,27 +467,28 @@
     }
   }
 
-  // ---------- On-screen keyboard (phones) ----------
-  // iPhones keep the page full height and only shrink the "visual viewport"
-  // when the keyboard opens; Android resizes the page (see the viewport meta
-  // tag). Either way the map, top bar and guess box are laid out in the
-  // visible area and the pins are refitted above the guess box.
+  // ---------- Phones: keyboard and touch ----------
+  // Everything the player sees lives in #app, which is sized and placed to
+  // match the part of the screen that's actually visible (the "visual
+  // viewport"). When a phone keyboard opens, the visible part shrinks: #app
+  // shrinks with it, the guess box stays just above the keyboard, and the pins
+  // are refitted into the space that's left. iPhones only shrink the visual
+  // viewport; Android resizes the page (viewport meta tag) — both end up here.
+  const appEl = document.getElementById("app");
   const vv = window.visualViewport;
-  let fullHeight = window.innerHeight;
+  let fullHeight = 0;
   let syncQueued = false;
+
+  const typing = () => document.activeElement && document.activeElement.tagName === "INPUT";
 
   function syncViewport() {
     syncQueued = false;
     const height = vv ? vv.height : window.innerHeight;
     const offsetTop = vv ? vv.offsetTop : 0;
-    if (document.activeElement !== guessInput) fullHeight = Math.max(window.innerHeight, height);
-    const covered = Math.max(0, Math.round(window.innerHeight - height - offsetTop));
-    const root = document.documentElement.style;
-    root.setProperty("--vv-top", `${Math.round(offsetTop)}px`);
-    root.setProperty("--vv-height", `${Math.round(height)}px`);
-    root.setProperty("--keyboard", `${covered}px`);
-    const keyboardOpen = document.activeElement === guessInput && height < fullHeight * 0.8;
-    document.body.classList.toggle("keyboard-open", keyboardOpen);
+    if (!typing() || !fullHeight) fullHeight = Math.max(fullHeight, height, window.innerHeight);
+    appEl.style.height = `${Math.round(height)}px`;
+    appEl.style.transform = offsetTop ? `translateY(${Math.round(offsetTop)}px)` : "";
+    document.body.classList.toggle("keyboard-open", typing() && height < fullHeight * 0.8);
     refit();
   }
 
@@ -482,24 +504,33 @@
   }
   window.addEventListener("resize", queueSync);
   window.addEventListener("orientationchange", () => { fullHeight = 0; setTimeout(queueSync, 300); });
-  // The keyboard animates in; sync again once it has settled.
-  guessInput.addEventListener("focus", () => { queueSync(); setTimeout(queueSync, 350); });
-  guessInput.addEventListener("blur", () => { queueSync(); setTimeout(queueSync, 350); });
-  // iOS scrolls the page to show a focused input; the layout already does that.
-  window.addEventListener("scroll", () => { if (window.scrollY) window.scrollTo(0, 0); });
+  // Keyboards animate in and out; sync again once they've settled.
+  document.addEventListener("focusin", () => { queueSync(); setTimeout(queueSync, 350); });
+  document.addEventListener("focusout", () => { queueSync(); setTimeout(queueSync, 350); });
+  // The map area itself can change size (e.g. while the card is open).
+  if (window.ResizeObserver) new ResizeObserver(queueSync).observe(mapEl);
+
+  // The page must never move: no dragging, rubber-banding or pinch zoom.
+  // Only the card (which can be taller than a small screen) may scroll.
+  document.addEventListener("touchmove", (e) => {
+    if (e.touches.length > 1 || !e.target.closest(".overlay-card")) e.preventDefault();
+  }, { passive: false });
+  document.addEventListener("gesturestart", (e) => e.preventDefault());
+  document.addEventListener("dblclick", (e) => e.preventDefault());
+  window.addEventListener("scroll", () => { if (window.scrollY || window.scrollX) window.scrollTo(0, 0); });
 
   // ---------- Boot ----------
   async function boot() {
     setPlaying(false);
-    card.innerHTML = `<p class="card-lead">Loading today's run…</p>`;
+    card.innerHTML = `<p class="card-lead">Laddar dagens runda…</p>`;
     overlay.hidden = false;
     try {
       state = await api.today();
     } catch (err) {
       card.innerHTML = `
-        <p class="card-lead bad">Couldn't reach the game server</p>
+        <p class="card-lead bad">Kunde inte nå spelservern</p>
         <p class="card-sub">${escapeHtml(err.message)}</p>
-        <button class="primary-btn" id="retryBtn" type="button">Try again</button>`;
+        <button class="primary-btn" id="retryBtn" type="button">Försök igen</button>`;
       document.getElementById("retryBtn").addEventListener("click", boot);
       return;
     }

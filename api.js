@@ -48,7 +48,7 @@
         body: JSON.stringify(args || {}),
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error((body && body.message) || `Request failed (${res.status})`);
+      if (!res.ok) throw new Error((body && body.message) || `Förfrågan misslyckades (${res.status})`);
       return body;
     }
     return {
@@ -66,7 +66,7 @@
   // Same basic rules as hg_set_name in supabase/schema.sql, for instant feedback.
   // The word filter only runs on the server (offline mode has no filter; only
   // you see your name there).
-  const NAME_RULES = "Use 2–24 characters: letters, numbers, spaces and . _ ' -";
+  const NAME_RULES = "Använd 2–24 tecken: bokstäver, siffror, mellanslag och . _ ' -";
   window.HG_NAME_RULES = NAME_RULES;
   window.HG_cleanName = (name) => String(name || "").normalize("NFC").trim().replace(/\s+/g, " ");
   window.HG_validName = (n) =>
@@ -78,7 +78,7 @@
       const s = document.createElement("script");
       s.src = src;
       s.onload = resolve;
-      s.onerror = () => reject(new Error(`Could not load ${src}`));
+      s.onerror = () => reject(new Error(`Kunde inte ladda ${src}`));
       document.head.appendChild(s);
     });
   }
@@ -96,7 +96,7 @@
   const { normalize: norm, words, answerMatches } = window.HG_MATCH;
 
   function localApi() {
-    const ready = loadScript("data.js?v=11");
+    const ready = loadScript("data.js?v=13");
     const todayKey = () => new Date().toISOString().slice(0, 10); // UTC day, like the server
 
     function load() {
@@ -150,7 +150,7 @@
       setName: async (name) => {
         await ready;
         const run = load();
-        if (run.started) throw new Error("run already started");
+        if (run.started) throw new Error("Rundan har redan startat");
         const n = window.HG_cleanName(name);
         if (!window.HG_validName(n)) throw new Error(NAME_RULES);
         run.username = n;
@@ -160,7 +160,7 @@
       start: async () => {
         await ready;
         const run = load();
-        if (!run.username) throw new Error("Choose a name first");
+        if (!run.username) throw new Error("Välj ett namn först");
         run.started = true;
         save(run);
         return state(run);
@@ -168,9 +168,10 @@
       guess: async (text) => {
         await ready;
         const run = load();
-        if (!run.started || run.finished) throw new Error("no run in progress");
+        if (!run.started || run.finished) throw new Error("Ingen runda pågår");
         const p = current(run);
-        if (words(norm(text)).length < 2 && words(norm(p.name)).length >= 2) {
+        // One-word guesses only count for people known by a single name.
+        if (words(norm(text)).length < 2 && !p.answers.concat(p.name).some((x) => words(norm(x)).length === 1)) {
           return { needs_full_name: true, state: state(run) };
         }
         const correct = p.answers.concat(p.name).some((a) => answerMatches(norm(text), norm(a)));
@@ -194,8 +195,8 @@
       hint: async () => {
         await ready;
         const run = load();
-        if (!run.started || run.finished) throw new Error("no run in progress");
-        if (run.hint_used) throw new Error("hint already used");
+        if (!run.started || run.finished) throw new Error("Ingen runda pågår");
+        if (run.hint_used) throw new Error("Ledtråden är redan använd");
         run.hint_used = true;
         save(run);
         return current(run).hint;
