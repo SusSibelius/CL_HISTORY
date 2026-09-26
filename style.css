@@ -134,27 +134,6 @@ html, body {
   color: var(--ink-soft);
 }
 
-/* ---------- Legend ---------- */
-.legend {
-  position: absolute;
-  top: calc(78px + env(safe-area-inset-top, 0px));
-  left: 20px;
-  z-index: 400;
-  display: flex;
-  gap: 14px;
-  background: var(--glass);
-  padding: 7px 12px;
-  border-radius: 999px;
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(10px);
-  font-size: 12px;
-  color: var(--ink-soft);
-}
-.legend-item { display: flex; align-items: center; gap: 6px; }
-.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.dot.born { background: var(--born); }
-.dot.died { background: var(--died); }
-
 /* ---------- Map pins ---------- */
 .map-marker {
   display: flex;
@@ -179,6 +158,13 @@ html, body {
   margin-bottom: 3px;
 }
 .marker-year { transition: transform 0.2s ease; }
+.marker-kind {
+  font-family: "Inter", sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  opacity: 0.85;
+}
 .marker-year.born { background: var(--born); }
 .marker-year.died { background: var(--died); }
 .marker-pin {
@@ -238,26 +224,6 @@ html, body {
   box-shadow: 0 0 0 2px rgba(214, 164, 25, 0.4);
 }
 
-.hint-btn {
-  flex: none;
-  width: 44px;
-  border: none;
-  background: rgba(34, 38, 43, 0.05);
-  border-radius: 12px;
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
-  transition: background 0.15s ease, opacity 0.2s ease, transform 0.15s ease;
-}
-.hint-btn:hover { background: rgba(214, 164, 25, 0.18); transform: translateY(-1px); }
-.hint-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(214, 164, 25, 0.4); }
-.hint-btn:disabled {
-  opacity: 0.35;
-  cursor: default;
-  background: rgba(34, 38, 43, 0.05);
-  transform: none;
-}
-
 .guess-submit {
   border: none;
   background: var(--ink);
@@ -282,11 +248,16 @@ html, body {
 }
 .feedback.correct { color: var(--born); font-weight: 600; }
 .feedback.wrong { color: var(--wrong); font-weight: 600; }
-.feedback.hint {
+/* The hint for the current person, above the guess box. */
+.person-hint {
+  margin: 2px 4px 10px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
   color: var(--ink);
-  line-height: 1.4;
   animation: hint-in 0.3s ease;
 }
+.person-hint[hidden] { display: none; }
 @keyframes hint-in {
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
@@ -522,10 +493,8 @@ label.card-lead { display: block; }
   .topbar-right { gap: 8px; min-width: 0; }
   .player-chip { max-width: 30vw; padding: 7px 11px; font-size: 12px; }
   .streak { padding: 5px 11px; }
-  .legend { top: calc(62px + env(safe-area-inset-top, 0px)); left: 14px; padding: 5px 10px; gap: 10px; font-size: 11px; }
   .guess-capsule { width: calc(100% - 24px); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
   /* While typing: more room for the map. */
-  .keyboard-open .legend { display: none; }
   .keyboard-open .guess-capsule { bottom: 8px; }
   .keyboard-open .feedback { margin-top: 6px; }
 }
@@ -566,6 +535,6 @@ label.card-lead { display: block; }
 .guess-row.right strong { color: var(--born); }
 
 @media (prefers-reduced-motion: reduce) {
-  .map-marker, .overlay, .feedback.hint { animation: none !important; }
+  .map-marker, .overlay, .person-hint { animation: none !important; }
   .guess-capsule.pulse-correct { animation: none !important; }
 }

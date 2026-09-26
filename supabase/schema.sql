@@ -193,10 +193,11 @@ language sql stable as $$
   offset p_pos limit 1
 $$;
 
--- What the map needs, and nothing that gives the answer away.
+-- What the player sees: the pins and the hint, nothing that gives the name away.
 create or replace function hg_private.clue(p public.people) returns json
 language sql stable as $$
   select json_build_object(
+    'hint', p.hint,
     'born', json_build_object('year', p.born_year, 'lat', p.born_lat, 'lng', p.born_lng),
     'died', json_build_object('year', p.died_year, 'lat', p.died_lat, 'lng', p.died_lng)
   )
