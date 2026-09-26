@@ -404,6 +404,32 @@ end
 $$;
 
 -- Today's top scores. Runs still in progress are included and marked.
+-- The run in review, once it's over: every person the player got to, in
+-- order, with the pins, the hint, the answer and whether they got it right.
+-- Only for a finished run, so it can't be used to look up answers.
+create or replace function public.hg_recap(p_device uuid) returns json
+language plpgsql stable security definer set search_path = public, pg_temp as $$
+declare
+  r public.runs;
+  total int := (select count(*) from public.people);
+begin
+  select * into r from public.runs
+  where day = hg_private.today() and device_id = p_device and finished_at is not null;
+  if r.id is null then raise exception 'Rundan är inte slut än'; end if;
+  return (
+    select coalesce(json_agg(json_build_object(
+             'correct', pos < r.score,
+             'name', p.name,
+             'hint', p.hint,
+             'born', json_build_object('year', p.born_year, 'lat', p.born_lat, 'lng', p.born_lng, 'place', p.born_place),
+             'died', json_build_object('year', p.died_year, 'lat', p.died_lat, 'lng', p.died_lng, 'place', p.died_place)
+           ) order by pos), '[]'::json)
+    from generate_series(0, least(r.score, total - 1)) pos,
+         lateral hg_private.person_at(r.day, pos) p
+  );
+end
+$$;
+
 create or replace function public.hg_leaderboard(p_device uuid, p_limit int default 20) returns json
 language sql stable security definer set search_path = public, pg_temp as $$
   with ranked as (
@@ -429,5 +455,5 @@ revoke usage on schema hg_private from public, anon, authenticated;
 grant execute on function
   public.hg_today(uuid), public.hg_set_name(uuid, text), public.hg_start(uuid),
   public.hg_guess(uuid, text), public.hg_hint(uuid),
-  public.hg_leaderboard(uuid, int)
+  public.hg_leaderboard(uuid, int), public.hg_recap(uuid)
 to anon, authenticated;
