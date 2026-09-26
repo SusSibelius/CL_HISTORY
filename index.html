@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=14">
+<link rel="stylesheet" href="style.css?v=15">
 </head>
 <body>
 <div id="app">
@@ -48,6 +48,9 @@
     <p class="feedback" id="feedback" aria-live="polite"></p>
   </main>
 
+  <!-- Reviewing a finished run on the map, one person at a time. -->
+  <section class="recap-panel" id="recapPanel" aria-live="polite" hidden></section>
+
   <div class="overlay" id="dailyOverlay" hidden>
     <div class="overlay-card" id="dailyCard" aria-live="polite"></div>
   </div>
@@ -56,8 +59,8 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="config.js?v=13"></script>
-  <script src="match.js?v=14"></script>
-  <script src="api.js?v=14"></script>
-  <script src="game.js?v=14"></script>
+  <script src="match.js?v=15"></script>
+  <script src="api.js?v=15"></script>
+  <script src="game.js?v=15"></script>
 </body>
 </html>

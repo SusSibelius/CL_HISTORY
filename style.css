@@ -248,6 +248,116 @@ html, body {
 }
 .feedback.correct { color: var(--born); font-weight: 600; }
 .feedback.wrong { color: var(--wrong); font-weight: 600; }
+/* ---------- Recap panel (reviewing a finished run) ---------- */
+.recap-panel {
+  position: absolute;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 500;
+  width: min(440px, calc(100% - 32px));
+  background: var(--glass-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+  padding: 14px 16px 12px;
+  animation: hint-in 0.25s ease;
+}
+.recap-panel[hidden] { display: none; }
+.recap-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.recap-badge {
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+.recap-badge.ok { color: var(--born); background: var(--born-soft); }
+.recap-badge.miss { color: var(--wrong); background: rgba(178, 58, 58, 0.1); }
+.recap-name {
+  margin: 8px 0 2px;
+  font-family: "Fraunces", serif;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+.recap-guess {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.recap-guess s { color: var(--wrong); text-decoration-thickness: 1.5px; }
+.recap-hint {
+  margin: 6px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.recap-places {
+  display: grid;
+  gap: 2px;
+  margin: 8px 0 12px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--ink-soft);
+}
+.recap-places b { font-weight: 600; }
+.recap-places b.born { color: var(--born); }
+.recap-places b.died { color: var(--died); }
+.recap-nav {
+  display: flex;
+  gap: 8px;
+}
+.recap-arrow, .recap-back {
+  border: none;
+  border-radius: 12px;
+  font-family: "Inter", sans-serif;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+.recap-arrow {
+  flex: none;
+  width: 52px;
+  height: 44px;
+  font-size: 20px;
+  background: var(--ink);
+  color: var(--paper);
+}
+.recap-arrow:disabled { opacity: 0.2; cursor: default; }
+.recap-back {
+  flex: 1;
+  height: 44px;
+  font-size: 14px;
+  background: rgba(34, 38, 43, 0.06);
+  color: var(--ink);
+}
+.recap-arrow:not(:disabled):hover, .recap-back:hover { transform: translateY(-1px); }
+
+/* "Se din runda på kartan" on the result card. */
+.secondary-btn {
+  display: block;
+  width: 100%;
+  margin: 4px 0 14px;
+  padding: 12px 20px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(214, 164, 25, 0.18);
+  color: var(--ink);
+  font-family: "Inter", sans-serif;
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.secondary-btn:hover { background: rgba(214, 164, 25, 0.28); transform: translateY(-1px); }
+.secondary-btn:disabled { opacity: 0.6; cursor: default; transform: none; }
+
 /* The hint for the current person, above the guess box. */
 .person-hint {
   margin: 2px 4px 10px;
@@ -493,7 +603,7 @@ label.card-lead { display: block; }
   .topbar-right { gap: 8px; min-width: 0; }
   .player-chip { max-width: 30vw; padding: 7px 11px; font-size: 12px; }
   .streak { padding: 5px 11px; }
-  .guess-capsule { width: calc(100% - 24px); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+  .guess-capsule, .recap-panel { width: calc(100% - 24px); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
   /* While typing: more room for the map. */
   .keyboard-open .guess-capsule { bottom: 8px; }
   .keyboard-open .feedback { margin-top: 6px; }
@@ -535,6 +645,6 @@ label.card-lead { display: block; }
 .guess-row.right strong { color: var(--born); }
 
 @media (prefers-reduced-motion: reduce) {
-  .map-marker, .overlay, .person-hint { animation: none !important; }
+  .map-marker, .overlay, .person-hint, .recap-panel { animation: none !important; }
   .guess-capsule.pulse-correct { animation: none !important; }
 }
