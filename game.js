@@ -12,7 +12,8 @@
   // ---------- DOM ----------
   const streakNumEl = document.getElementById("streakNum");
   const playerChip = document.getElementById("playerChip");
-  const lifelineBtn = document.getElementById("lifelineBtn");
+  const personHint = document.getElementById("personHint");
+  const personHintText = document.getElementById("personHintText");
   const guessCapsule = document.getElementById("guessCapsule");
   const guessForm = document.getElementById("guessForm");
   const guessInput = document.getElementById("guessInput");
@@ -21,7 +22,6 @@
   const card = document.getElementById("dailyCard");
   const mapEl = document.getElementById("map");
   const topbarEl = document.querySelector(".topbar");
-  const legendEl = document.querySelector(".legend");
 
   // ---------- Map ----------
   const map = L.map("map", {
@@ -64,7 +64,7 @@
     return L.divIcon({
       className: "",
       html: `<div class="map-marker">
-               <div class="marker-year ${kind}">${formatYear(year)}</div>
+               <div class="marker-year ${kind}"><span class="marker-kind">${kind === "born" ? "Född" : "Död"}</span> ${formatYear(year)}</div>
                <div class="marker-pin ${kind}"></div>
              </div>`,
       iconSize: [70, 56],
@@ -75,7 +75,7 @@
   // Keep both markers readable when born/died are close together on screen:
   // spread the year labels apart sideways, and merge the pins into one
   // two-tone pin when they would sit on top of each other.
-  const LABEL_GAP = 62; // px between label centres (labels are ~50px wide)
+  const LABEL_GAP = 96; // px between label centres (labels are ~85px wide)
   const LABEL_H = 30;
   const PIN_MERGE = 12;
 
@@ -111,19 +111,13 @@
 
   // ---------- Helpers ----------
   // Fit both pins into the part of the map that's actually visible: below the
-  // top bar (and the legend on desktop), above the guess box (and the keyboard
+  // top bar, above the guess box (and the keyboard
   // on phones). Measured from the page, so it adapts when the keyboard opens.
   const LABEL_ROOM = 48; // the year label sits above the pin
   function fitToBounds(bounds) {
     const mapRect = mapEl.getBoundingClientRect();
-    const mid = mapRect.top + mapRect.height / 2;
-    let top = topbarEl.getBoundingClientRect().bottom;
-    let bottom = guessCapsule.getBoundingClientRect().top;
-    const legend = legendEl.getBoundingClientRect();
-    if (legend.height && getComputedStyle(legendEl).display !== "none") {
-      if (legend.bottom < mid) top = Math.max(top, legend.bottom);
-      else bottom = Math.min(bottom, legend.top);
-    }
+    const top = topbarEl.getBoundingClientRect().bottom;
+    const bottom = guessCapsule.getBoundingClientRect().top;
     let padTop = Math.max(0, top - mapRect.top) + LABEL_ROOM;
     let padBottom = Math.max(0, mapRect.bottom - bottom) + 12;
     // Never ask for more padding than the map has room for: Leaflet would then
@@ -134,7 +128,10 @@
       padTop *= scale;
       padBottom *= scale;
     }
-    const side = mapRect.width < 500 ? 36 : 48; // room for the year labels
+    // Room at the sides for half of the widest year label ("Född 551 f.Kr.").
+    const labels = [bornMarker, deathMarker].map((m) => m && m.getElement() && m.getElement().querySelector(".marker-year"));
+    const labelWidth = Math.max(80, ...labels.map((l) => (l ? l.offsetWidth : 0)));
+    const side = labelWidth / 2 + 10;
     if (!mapRect.width || !mapRect.height) return; // not laid out yet
     map.fitBounds(bounds, {
       paddingTopLeft: [side, padTop],
@@ -161,7 +158,7 @@
   }
 
   // ---------- Rounds ----------
-  const GUESS_TIP = "För- och efternamn – små stavfel är okej.";
+  const GUESS_TIP = "Skriv för- och efternamn – små stavfel är okej.";
 
   function showTip() {
     feedbackEl.textContent = GUESS_TIP;
@@ -173,7 +170,10 @@
     guessInput.value = "";
     guessInput.disabled = false;
     guessInput.readOnly = false;
-    lifelineBtn.disabled = state.hint_used;
+
+    // Every person comes with a hint.
+    personHintText.textContent = person.hint || "";
+    personHint.hidden = !person.hint;
 
     if (bornMarker) map.removeLayer(bornMarker);
     if (deathMarker) map.removeLayer(deathMarker);
@@ -199,7 +199,6 @@
 
   function setPlaying(on) {
     guessInput.disabled = !on;
-    lifelineBtn.disabled = !on || (state && state.hint_used);
     if (!on) accepting = false;
   }
 
@@ -315,7 +314,7 @@
                  spellcheck="false" placeholder="Ditt namn" value="${escapeHtml(s.username || savedName())}" />
         </div>
         <p class="name-error" id="nameError" role="alert"></p>
-        <p class="card-rules">Du får <strong>en runda per dag</strong>. Alla får samma personer i samma ordning. Nämn så många du kan i rad med <strong>för- och efternamn</strong> (små stavfel är okej) – en felgissning avslutar rundan. En 💡-ledtråd per runda.</p>
+        <p class="card-rules">Du får <strong>en runda per dag</strong>. Alla får samma personer i samma ordning. Du ser var personen föddes och dog, och får en 💡-ledtråd om vem det är. Nämn så många du kan i rad med <strong>för- och efternamn</strong> (små stavfel är okej) – en felgissning avslutar rundan.</p>
         <button class="primary-btn" id="startBtn" type="button">Starta dagens runda</button>`;
     } else if (s.status === "playing") {
       html += `
@@ -444,20 +443,6 @@
     handleGuess(guessInput.value);
   });
 
-  lifelineBtn.addEventListener("click", async () => {
-    if (!accepting || state.hint_used) return;
-    lifelineBtn.disabled = true;
-    try {
-      const hint = await api.hint();
-      state.hint_used = true;
-      feedbackEl.textContent = `💡 ${hint}`;
-      feedbackEl.className = "feedback hint";
-    } catch (err) {
-      lifelineBtn.disabled = false;
-      showError(err);
-    }
-    guessInput.focus();
-  });
 
   function refit() {
     map.invalidateSize({ animate: false });

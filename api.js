@@ -57,7 +57,6 @@
       setName: (name) => rpc("hg_set_name", { p_device: device, p_name: name }),
       start: () => rpc("hg_start", { p_device: device }),
       guess: (text) => rpc("hg_guess", { p_device: device, p_guess: text }),
-      hint: () => rpc("hg_hint", { p_device: device }).then((r) => r.hint),
       leaderboard: (limit) => rpc("hg_leaderboard", { p_device: device, p_limit: limit || 10 }),
     };
   }
@@ -137,6 +136,7 @@
         hint_used: run.hint_used,
         total: PEOPLE.length,
         person: p && {
+          hint: p.hint,
           born: { year: p.born.year, lat: p.born.lat, lng: p.born.lng },
           died: { year: p.died.year, lat: p.died.lat, lng: p.died.lng },
         },
@@ -191,15 +191,6 @@
           },
           state: state(run),
         };
-      },
-      hint: async () => {
-        await ready;
-        const run = load();
-        if (!run.started || run.finished) throw new Error("Ingen runda pågår");
-        if (run.hint_used) throw new Error("Ledtråden är redan använd");
-        run.hint_used = true;
-        save(run);
-        return current(run).hint;
       },
       leaderboard: async () => {
         await ready;

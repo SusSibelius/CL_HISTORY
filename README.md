@@ -30,9 +30,9 @@ The game is in Swedish: all text, and the people's names, hints and places come 
 It's a **daily challenge**: everyone gets one run per day with the same people in the same order, and competes on a shared leaderboard.
 
 - Before your run you type the name you'll appear under on the leaderboard. Names are 2–24 characters (Latin letters incl. accents, numbers, spaces and `. _ ' -`), unique per day, and checked against a word filter. Your name is remembered for the next days. No login needed.
-- Each round shows one person's birth pin (teal) and death pin (plum), labeled with the year. Type who it is — **first and last name**; there are no suggestions. A correct guess moves you to the next person; one wrong guess ends the run and reveals the answer.
+- Each round shows one person's birth pin (teal, "Född") and death pin (plum, "Död"), labeled with the year. Type who it is — **first and last name**; there are no suggestions. A correct guess moves you to the next person; one wrong guess ends the run and reveals the answer.
 - Small typos are forgiven (checked per word: 1–2 letter words must be exact, 3–6 letters may have 1 typo, longer words 2; two swapped letters count as one typo). A one-word guess doesn't end the run — you're just asked for the full name.
-- One 💡 hint per run reveals a short description of the current person.
+- Every person comes with a 💡 hint (a short description, e.g. "Tysk fysiker"), shown above the guess box.
 - After the run you see your score, your rank today, the leaderboard and a countdown to the next run. Days change at midnight UTC.
 - Reloading mid-run resumes where you left off; you can't restart a run you've already played.
 
