@@ -96,7 +96,7 @@
   const { normalize: norm, words, answerMatches } = window.HG_MATCH;
 
   function localApi() {
-    const ready = loadScript("data.js?v=15");
+    const ready = loadScript("data.js?v=16");
     const todayKey = () => new Date().toISOString().slice(0, 10); // UTC day, like the server
 
     function load() {
@@ -175,7 +175,13 @@
         if (words(norm(text)).length < 2 && !p.answers.concat(p.name).some((x) => words(norm(x)).length === 1)) {
           return { needs_full_name: true, state: state(run) };
         }
-        const correct = p.answers.concat(p.name).some((a) => answerMatches(norm(text), norm(a)));
+        const g = norm(text);
+        const own = p.answers.concat(p.name).map(norm);
+        // Small typos are forgiven, but the exact name of someone else in the
+        // game never counts ("Chopin" isn't a typo of "Chaplin").
+        const someoneElse = !own.includes(g) &&
+          PEOPLE.some((o) => o !== p && o.answers.concat(o.name).some((x) => norm(x) === g));
+        const correct = !someoneElse && own.some((a) => answerMatches(g, a));
         if (correct) {
           run.score += 1;
           if (run.score >= PEOPLE.length) run.finished = true;
