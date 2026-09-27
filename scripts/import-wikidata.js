@@ -206,6 +206,48 @@ function swedishJobs(jobs) {
   return sv.length ? sv.join(", ") : null;
 }
 
+// Short forms of a name that people actually use: the surname, with any
+// particle in front ("van gogh", "da vinci"), and the bare last word ("gogh").
+// Nothing for names whose last word isn't a surname: regnal numbers
+// ("Johannes Paulus II") and epithets ("Alexander den store", "Joan of Arc").
+const PARTICLES = new Set(["van", "von", "da", "de", "di", "del", "della", "der", "du", "la", "le", "af", "ibn", "bin", "al", "el", "ter", "ten", "zu"]);
+const EPITHET = new Set(["of", "av", "the", "den", "det", "store", "stora", "great", "helige", "saint", "sankt"]);
+function surnames(full) {
+  let w = words(normalize(full || ""));
+  if (w.length && ["jr", "sr"].includes(w[w.length - 1])) w = w.slice(0, -1);
+  if (w.length < 2 || w.some((x) => EPITHET.has(x))) return [];
+  const last = w[w.length - 1];
+  if (last.length < 3 || /^(\d+|m{0,3}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3}))$/.test(last)) return [];
+  let i = w.length - 1;
+  while (i > 1 && PARTICLES.has(w[i - 1])) i--;
+  const withParticles = w.slice(i).join(" ");
+  return withParticles === last ? [last] : [withParticles, last];
+}
+
+// Surnames shared by several people go to the clearly most famous one
+// (Mahatma Gandhi, not Indira Gandhi) — at least 1.5 times as famous as the
+// next — or, if none stands out (two Roosevelts), to nobody.
+function assignSurnames(people, count) {
+  // Only people who make the final list compete for a surname.
+  const kept = new Set([...people].sort((a, b) => b.fame - a.fame).slice(0, count));
+  const owners = new Map();
+  for (const p of kept) {
+    for (const s of p.surnames || []) {
+      if (!owners.has(s)) owners.set(s, []);
+      owners.get(s).push(p);
+    }
+  }
+  let given = 0, shared = 0;
+  for (const [s, ps] of owners) {
+    ps.sort((a, b) => b.fame - a.fame);
+    const winner = ps.length === 1 || ps[0].fame >= 1.5 * ps[1].fame ? ps[0] : null;
+    if (ps.length > 1) shared++;
+    if (winner && !winner.answers.includes(s)) { winner.answers.push(s); given++; }
+  }
+  for (const p of people) delete p.surnames;
+  return { given, shared };
+}
+
 function toPerson(d, fame) {
   const r = d.rows[0];
   const clean = (s) => (s || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
@@ -239,8 +281,14 @@ function toPerson(d, fame) {
   for (const a of [name, enName, svLabel, ...d.alts]) {
     if (!a || !latin(a) || a.length > 40 || /\d/.test(a)) continue;
     const n = normalize(a.replace(/\([^)]*\)/g, ""));
-    if (!n || (!oneWord && a !== enName && words(n).length < 2) || answers.includes(n)) continue;
+    // One-word aliases only when the word is part of the name itself: that's
+    // the name the person is best known by ("Leonardo", "Galileo").
+    const partOfName = words(n).length === 1 && nameWords.some((l) => answerMatches(n, l));
+    if (!n || (!oneWord && a !== enName && words(n).length < 2 && !partOfName) || answers.includes(n)) continue;
     if (a !== name && a !== enName && a !== svLabel && !sharesWord(n)) continue;
+    // "A. Jackson", "J. Monroe": an initial plus the surname adds nothing and
+    // gets in the way of the surname alone ("jackson" for Michael Jackson).
+    if (a !== name && a !== enName && a !== svLabel && /^[a-z] [a-z]+$/.test(n)) continue;
     answers.push(n);
   }
 
@@ -248,6 +296,7 @@ function toPerson(d, fame) {
     person: {
       name,
       answers,
+      surnames: [...new Set([...surnames(name), ...surnames(enName)])].filter((x) => !answers.includes(x)),
       hint: makeHint(val(r, "svDesc") || swedishJobs(d.jobs) || val(r, "desc"), d.jobs, [name, enName]),
       fame,
       wikidata: d.id,
@@ -290,7 +339,20 @@ function resolveClashes(people) {
     const pa = people[A.i], pb = people[B.i];
     const aLive = A.main || pa.answers.includes(A.a), bLive = B.main || pb.answers.includes(B.a);
     if (!aLive || !bLive) continue;
-    if (!A.main) removeAlias(A);
+    if (!A.a.includes(" ") && !B.a.includes(" ") && A.a !== B.a) {
+      // Two different one-word names a typo apart ("chaplin"/"chopin",
+      // "augustus"/"augustinus") can both stay: the game never accepts the
+      // exact name of someone else, so typing one never counts as the other.
+      continue;
+    }
+    if (!A.main && !B.main && !A.a.includes(" ") && !B.a.includes(" ")) {
+      // The same short name for two people: the clearly more famous person
+      // keeps it, otherwise neither does.
+      if (pa.fame >= 1.5 * pb.fame) removeAlias(B);
+      else if (pb.fame >= 1.5 * pa.fame) removeAlias(A);
+      else { removeAlias(A); removeAlias(B); }
+    }
+    else if (!A.main) removeAlias(A);
     else if (!B.main) removeAlias(B);
     else {
       const loser = pa.fame >= pb.fame ? B : A;
@@ -329,10 +391,12 @@ async function main() {
     console.log(` ${people.length} kept`);
   }
 
+  const sn = assignSurnames(people, TARGET);
+  console.log(`Added ${sn.given} surname answers (${sn.shared} surnames shared by several people).`);
   console.log("Checking that no two people can be confused…");
   const dropped = resolveClashes(people);
   people.sort((a, b) => b.fame - a.fame);
-  const out = people.slice(0, TARGET);
+  const out = people.slice(0, TARGET).map((p) => ({ ...p, answers: [...new Set(p.answers)] }));
   const header = `// Generated by scripts/import-wikidata.js from Wikidata (CC0) on ${new Date().toISOString().slice(0, 10)}
 // — don't edit by hand: change the import script and re-run it.
 // ${out.length} people, most famous first. fame = number of Wikipedia/sister-project

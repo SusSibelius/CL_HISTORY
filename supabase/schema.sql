@@ -363,9 +363,10 @@ begin
 
   p := hg_private.person_at(r.day, r.score);
 
-  -- First and last name are required (unless the person is known by a single
-  -- name, like Konfucius). A one-word guess doesn't count as a wrong answer
-  -- (and isn't checked, so it doesn't reveal anything).
+  -- One word (a surname, "Beethoven") is enough for most people. For those
+  -- where it isn't — surnames shared by several people, "Johannes Paulus II" —
+  -- a one-word guess doesn't count as a wrong answer: the player is asked for
+  -- the full name (and nothing is revealed).
   if array_length(regexp_split_to_array(hg_private.norm(p_guess), '\s+'), 1) < 2
      and not exists (select 1 from unnest(p.answers || p.name) a
                      where array_length(regexp_split_to_array(hg_private.norm(a), '\s+'), 1) = 1) then
@@ -374,6 +375,15 @@ begin
 
   ok := exists (select 1 from unnest(p.answers || p.name) a
                 where hg_private.answer_matches(hg_private.norm(p_guess), hg_private.norm(a)));
+  -- Small typos are forgiven, but the exact name of someone else in the game
+  -- never counts ("Chopin" isn't a typo of "Chaplin").
+  if ok
+     and not exists (select 1 from unnest(p.answers || p.name) a
+                     where hg_private.norm(a) = hg_private.norm(p_guess))
+     and exists (select 1 from public.people o, unnest(o.answers || o.name) a
+                 where o.id <> p.id and hg_private.norm(a) = hg_private.norm(p_guess)) then
+    ok := false;
+  end if;
 
   if ok then
     update public.runs set score = score + 1,

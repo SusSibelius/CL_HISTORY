@@ -159,7 +159,7 @@
   }
 
   // ---------- Rounds ----------
-  const GUESS_TIP = "Skriv för- och efternamn – små stavfel är okej.";
+  const GUESS_TIP = "Efternamnet räcker oftast – små stavfel är okej.";
 
   function showTip() {
     feedbackEl.textContent = GUESS_TIP;
@@ -232,7 +232,7 @@
     state = res.state;
 
     if (res.needs_full_name) {
-      feedbackEl.textContent = "Skriv både för- och efternamn.";
+      feedbackEl.textContent = "Flera heter så – skriv hela namnet.";
       feedbackEl.className = "feedback wrong";
       accepting = true;
       guessInput.readOnly = false;
@@ -319,7 +319,7 @@
                  spellcheck="false" placeholder="Ditt namn" value="${escapeHtml(s.username || savedName())}" />
         </div>
         <p class="name-error" id="nameError" role="alert"></p>
-        <p class="card-rules">Du får <strong>en runda per dag</strong>. Alla får samma personer i samma ordning. Du ser var personen föddes och dog, och får en 💡-ledtråd om vem det är. Nämn så många du kan i rad med <strong>för- och efternamn</strong> (små stavfel är okej) – en felgissning avslutar rundan.</p>
+        <p class="card-rules">Du får <strong>en runda per dag</strong>. Alla får samma personer i samma ordning. Du ser var personen föddes och dog, och får en 💡-ledtråd om vem det är. Nämn så många du kan i rad – <strong>efternamnet räcker oftast</strong> och små stavfel är okej. En felgissning avslutar rundan.</p>
         <button class="primary-btn" id="startBtn" type="button">Starta dagens runda</button>`;
     } else if (s.status === "playing") {
       html += `
