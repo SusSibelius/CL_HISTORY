@@ -58,6 +58,7 @@
       start: () => rpc("hg_start", { p_device: device }),
       guess: (text) => rpc("hg_guess", { p_device: device, p_guess: text }),
       leaderboard: (limit) => rpc("hg_leaderboard", { p_device: device, p_limit: limit || 10 }),
+      recap: () => rpc("hg_recap", { p_device: device }),
     };
   }
 
@@ -95,7 +96,7 @@
   const { normalize: norm, words, answerMatches } = window.HG_MATCH;
 
   function localApi() {
-    const ready = loadScript("data.js?v=13");
+    const ready = loadScript("data.js?v=15");
     const todayKey = () => new Date().toISOString().slice(0, 10); // UTC day, like the server
 
     function load() {
@@ -191,6 +192,19 @@
           },
           state: state(run),
         };
+      },
+      recap: async () => {
+        await ready;
+        const run = load();
+        if (!run.finished) throw new Error("Rundan är inte slut än");
+        const people = order(run.day).slice(0, Math.min(run.score + 1, PEOPLE.length));
+        return people.map((p, i) => ({
+          correct: i < run.score,
+          name: p.name,
+          hint: p.hint,
+          born: { ...p.born },
+          died: { ...p.died },
+        }));
       },
       leaderboard: async () => {
         await ready;

@@ -22,6 +22,7 @@
   const card = document.getElementById("dailyCard");
   const mapEl = document.getElementById("map");
   const topbarEl = document.querySelector(".topbar");
+  const recapPanel = document.getElementById("recapPanel");
 
   // ---------- Map ----------
   const map = L.map("map", {
@@ -117,7 +118,7 @@
   function fitToBounds(bounds) {
     const mapRect = mapEl.getBoundingClientRect();
     const top = topbarEl.getBoundingClientRect().bottom;
-    const bottom = guessCapsule.getBoundingClientRect().top;
+    const bottom = (recapPanel.hidden ? guessCapsule : recapPanel).getBoundingClientRect().top;
     let padTop = Math.max(0, top - mapRect.top) + LABEL_ROOM;
     let padBottom = Math.max(0, mapRect.bottom - bottom) + 12;
     // Never ask for more padding than the map has room for: Leaflet would then
@@ -175,6 +176,12 @@
     personHintText.textContent = person.hint || "";
     personHint.hidden = !person.hint;
 
+    placeMarkers(person);
+    guessInput.focus();
+  }
+
+  // Put a person's birth and death pins on the map and fit the view to them.
+  function placeMarkers(person) {
     if (bornMarker) map.removeLayer(bornMarker);
     if (deathMarker) map.removeLayer(deathMarker);
 
@@ -185,8 +192,6 @@
 
     fitToBounds(L.latLngBounds([[b.lat, b.lng], [d.lat, d.lng]]));
     layoutMarkers();
-
-    guessInput.focus();
   }
 
   function setScore(score, bump) {
@@ -345,6 +350,7 @@
           <div><span class="card-stat-num">${s.score}</span><span class="card-stat-label">i rad</span></div>
           ${api.online ? `<div><span class="card-stat-num">#${st.rank}</span><span class="card-stat-label">av ${st.players} idag</span></div>` : ""}
         </div>
+        <button class="secondary-btn" id="recapBtn" type="button">🗺️ Se din runda på kartan</button>
         <p class="card-next">Nästa runda om <strong id="countdown">${countdownText()}</strong></p>`;
     }
 
@@ -354,6 +360,8 @@
 
     const startBtn = document.getElementById("startBtn");
     if (startBtn) startBtn.addEventListener("click", startRun);
+    const recapBtn = document.getElementById("recapBtn");
+    if (recapBtn) recapBtn.addEventListener("click", openRecap);
     const nameInput = document.getElementById("nameInput");
     if (nameInput) {
       nameInput.addEventListener("input", () => {
@@ -372,6 +380,86 @@
       }, 1000);
     }
   }
+
+  // ---------- Recap: step through a finished run on the map ----------
+  let recap = null; // { items, index }
+
+  async function openRecap() {
+    const btn = document.getElementById("recapBtn");
+    btn.disabled = true;
+    let items;
+    try {
+      items = await api.recap();
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = "Kunde inte ladda rundan – försök igen";
+      return;
+    }
+    if (!items.length) { btn.disabled = false; return; }
+    clearInterval(countdownTimer);
+    recap = { items, index: 0 };
+    overlay.hidden = true;
+    guessCapsule.hidden = true;
+    recapPanel.hidden = false;
+    showRecapItem(0);
+  }
+
+  function showRecapItem(i) {
+    const { items } = recap;
+    recap.index = Math.max(0, Math.min(items.length - 1, i));
+    const it = items[recap.index];
+    const miss = !it.correct ? loadLastMiss(state.day) : null;
+    recapPanel.innerHTML = `
+      <div class="recap-head">
+        <span class="recap-count">Person ${recap.index + 1} av ${items.length}</span>
+        <span class="recap-badge ${it.correct ? "ok" : "miss"}">${it.correct ? "✓ Rätt" : "✗ Här tog det slut"}</span>
+      </div>
+      <h2 class="recap-name">${escapeHtml(it.name)}</h2>
+      ${miss && miss.guess ? `<p class="recap-guess">Du gissade <s>${escapeHtml(miss.guess)}</s></p>` : ""}
+      ${it.hint ? `<p class="recap-hint">💡 ${escapeHtml(it.hint)}</p>` : ""}
+      <p class="recap-places">
+        <span><b class="born">Född</b> ${formatYear(it.born.year)} i ${escapeHtml(it.born.place)}</span>
+        <span><b class="died">Död</b> ${formatYear(it.died.year)} i ${escapeHtml(it.died.place)}</span>
+      </p>
+      <div class="recap-nav">
+        <button class="recap-arrow" id="recapPrev" type="button" aria-label="Föregående" ${recap.index === 0 ? "disabled" : ""}>←</button>
+        <button class="recap-back" id="recapBack" type="button">Tillbaka till resultatet</button>
+        <button class="recap-arrow" id="recapNext" type="button" aria-label="Nästa" ${recap.index === items.length - 1 ? "disabled" : ""}>→</button>
+      </div>`;
+    document.getElementById("recapPrev").addEventListener("click", () => showRecapItem(recap.index - 1));
+    document.getElementById("recapNext").addEventListener("click", () => showRecapItem(recap.index + 1));
+    document.getElementById("recapBack").addEventListener("click", closeRecap);
+    placeMarkers(it);
+  }
+
+  function closeRecap() {
+    recap = null;
+    recapPanel.hidden = true;
+    recapPanel.innerHTML = "";
+    guessCapsule.hidden = false;
+    if (bornMarker) { map.removeLayer(bornMarker); bornMarker = null; }
+    if (deathMarker) { map.removeLayer(deathMarker); deathMarker = null; }
+    showCard();
+  }
+
+  // Arrow keys, and swiping sideways on phones, step through the recap.
+  document.addEventListener("keydown", (e) => {
+    if (!recap) return;
+    if (e.key === "ArrowLeft") showRecapItem(recap.index - 1);
+    if (e.key === "ArrowRight") showRecapItem(recap.index + 1);
+    if (e.key === "Escape") closeRecap();
+  });
+  let swipeStart = null;
+  document.addEventListener("touchstart", (e) => {
+    swipeStart = recap && e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+  }, { passive: true });
+  document.addEventListener("touchend", (e) => {
+    if (!recap || !swipeStart) return;
+    const dx = e.changedTouches[0].clientX - swipeStart.x;
+    const dy = e.changedTouches[0].clientY - swipeStart.y;
+    swipeStart = null;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) showRecapItem(recap.index + (dx < 0 ? 1 : -1));
+  });
 
   // The guess that ended today's run, so the card can still show it after a reload.
   function saveLastMiss(miss) {
