@@ -305,7 +305,8 @@
       : leaderboardHtml(rows);
 
     const s = state;
-    let html = `<p class="card-eyebrow">Dagens runda · ${escapeHtml(formatDay(s.day))}</p>`;
+    let html = extra.notice ? `<p class="card-notice">${escapeHtml(extra.notice)}</p>` : "";
+    html += `<p class="card-eyebrow">Dagens runda · ${escapeHtml(formatDay(s.day))}</p>`;
 
     if (s.status === "new") {
       setTimeout(() => {
@@ -320,13 +321,15 @@
         </div>
         <p class="name-error" id="nameError" role="alert"></p>
         <p class="card-rules">Du får <strong>en runda per dag</strong>. Alla får samma personer i samma ordning. Du ser var personen föddes och dog, och får en 💡-ledtråd om vem det är. Nämn så många du kan i rad – <strong>efternamnet räcker oftast</strong> och små stavfel är okej. En felgissning avslutar rundan.</p>
-        <button class="primary-btn" id="startBtn" type="button">Starta dagens runda</button>`;
+        <button class="primary-btn" id="startBtn" type="button">Starta dagens runda</button>
+        ${accountLine()}`;
     } else if (s.status === "playing") {
       html += `
         <p class="card-lead">Din runda pågår</p>
         <h1>${escapeHtml(s.username)}</h1>
         <p class="card-rules">Du har <strong>${s.score}</strong> i rad. Fortsätt där du slutade.</p>
-        <button class="primary-btn" id="startBtn" type="button">Fortsätt rundan</button>`;
+        <button class="primary-btn" id="startBtn" type="button">Fortsätt rundan</button>
+        ${accountLine()}`;
     } else {
       // The miss that ended the run: just now, or remembered from earlier today.
       const miss = extra.answer ? extra : (loadLastMiss(s.day) || {});
@@ -351,6 +354,7 @@
           ${api.online ? `<div><span class="card-stat-num">#${st.rank}</span><span class="card-stat-label">av ${st.players} idag</span></div>` : ""}
         </div>
         <button class="secondary-btn" id="recapBtn" type="button">🗺️ Se din runda på kartan</button>
+        ${accountsOn && auth.user() ? `<button class="secondary-btn" data-view="profile" type="button">📊 Min statistik och achievements</button>` : accountLine()}
         <p class="card-next">Nästa runda om <strong id="countdown">${countdownText()}</strong></p>`;
     }
 
@@ -362,6 +366,7 @@
     if (startBtn) startBtn.addEventListener("click", startRun);
     const recapBtn = document.getElementById("recapBtn");
     if (recapBtn) recapBtn.addEventListener("click", openRecap);
+    bindViewButtons();
     const nameInput = document.getElementById("nameInput");
     if (nameInput) {
       nameInput.addEventListener("input", () => {
@@ -379,6 +384,136 @@
         if (cd.textContent === "00:00:00") setTimeout(boot, 1500);
       }, 1000);
     }
+  }
+
+  // ---------- Accounts (optional): login and the profile view ----------
+  // Playing as a guest works exactly as before; an account adds statistics
+  // and achievements. Only available online.
+  const auth = window.HG_AUTH;
+  const accountsOn = Boolean(api.online && auth && auth.enabled);
+
+  function accountLine() {
+    if (!accountsOn) return "";
+    const u = auth.user();
+    return u
+      ? `<p class="account-line">Inloggad som ${escapeHtml(u.email)} · <button class="link-btn" data-view="profile" type="button">Min statistik</button></p>`
+      : `<p class="account-line"><button class="link-btn" data-view="login" type="button">Logga in</button> för att spara din statistik och samla achievements – eller spela som gäst.</p>`;
+  }
+
+  function bindViewButtons() {
+    card.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => {
+      if (b.dataset.view === "login") showLogin();
+      else if (b.dataset.view === "profile") showProfile();
+      else if (b.dataset.view === "back") showCard();
+      else if (b.dataset.view === "logout") auth.signOut().then(() => boot("Du är utloggad. Du kan fortsätta spela som gäst."));
+    }));
+  }
+
+  function showLogin() {
+    clearInterval(countdownTimer);
+    card.innerHTML = `
+      <p class="card-eyebrow">Spara din statistik</p>
+      <h1>Logga in</h1>
+      <p class="card-rules">Skriv din e-post så skickar vi en inloggningslänk – inget lösenord behövs.
+        Med ett konto sparas dina rundor, du får statistik över tid och samlar achievements.
+        Rundor du redan har spelat i den här webbläsaren följer med.</p>
+      <input class="email-input" id="emailInput" type="email" autocomplete="email" inputmode="email"
+             spellcheck="false" placeholder="din@epost.se" />
+      <p class="name-error" id="loginError" role="alert"></p>
+      <button class="primary-btn" id="sendLinkBtn" type="button">Skicka inloggningslänk</button>
+      <button class="link-btn card-back" data-view="back" type="button">Tillbaka</button>`;
+    bindViewButtons();
+    const input = document.getElementById("emailInput");
+    const btn = document.getElementById("sendLinkBtn");
+    const errorEl = document.getElementById("loginError");
+    const send = async () => {
+      const email = input.value.trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        errorEl.textContent = "Skriv en giltig e-postadress.";
+        input.focus();
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = "Skickar…";
+      try {
+        await auth.sendLink(email);
+      } catch (err) {
+        errorEl.textContent = err.message;
+        btn.disabled = false;
+        btn.textContent = "Skicka inloggningslänk";
+        return;
+      }
+      card.innerHTML = `
+        <p class="card-eyebrow">Spara din statistik</p>
+        <h1>Kolla din mejl</h1>
+        <p class="card-rules">Vi har skickat en inloggningslänk till <strong>${escapeHtml(email)}</strong>.
+          Öppna länken <strong>på den här enheten</strong> så loggas du in direkt. Hittar du den inte, titta i skräpposten.</p>
+        <button class="primary-btn" data-view="back" type="button">Tillbaka till spelet</button>`;
+      bindViewButtons();
+    };
+    btn.addEventListener("click", send);
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+    input.addEventListener("input", () => { errorEl.textContent = ""; });
+    setTimeout(() => input.focus(), 50);
+  }
+
+  async function showProfile() {
+    clearInterval(countdownTimer);
+    card.innerHTML = `<p class="card-lead">Laddar din statistik…</p>`;
+    let st;
+    try {
+      st = await api.stats();
+    } catch (err) {
+      card.innerHTML = `
+        <p class="card-lead bad">Kunde inte ladda statistiken</p>
+        <p class="card-sub">${escapeHtml(err.message)}</p>
+        <button class="primary-btn" data-view="back" type="button">Tillbaka</button>`;
+      bindViewButtons();
+      return;
+    }
+    const tile = (value, label) => `<div class="stat-tile"><span class="stat-num">${value}</span><span class="stat-label">${label}</span></div>`;
+    const maxCount = Math.max(1, ...st.distribution.map((d) => d.count));
+    const done = st.achievements.filter((a) => a.value >= a.goal).length;
+    const day = (d) => new Date(d + "T00:00:00Z").toLocaleDateString("sv-SE", { day: "numeric", month: "short", timeZone: "UTC" });
+    card.innerHTML = `
+      <p class="card-eyebrow">Min statistik</p>
+      <h1>${escapeHtml(st.username || "Ditt konto")}</h1>
+      <p class="card-sub">${escapeHtml((auth.user() || {}).email || "")}</p>
+      <div class="stat-grid">
+        ${tile(st.played, "spelade rundor")}
+        ${tile(st.best, "bästa runda")}
+        ${tile(String(st.average).replace(".", ","), "i snitt")}
+        ${tile(st.total_correct, "rätt totalt")}
+        ${tile(st.current_days, "dagar i rad nu")}
+        ${tile(st.longest_days, "längsta dagsvit")}
+      </div>
+      <p class="board-title">Dina resultat</p>
+      <div class="dist">
+        ${st.distribution.map((d) => `
+          <div class="dist-row"><span class="dist-label">${d.label}</span>
+            <span class="dist-bar"><span style="width:${(d.count / maxCount) * 100}%"></span></span>
+            <span class="dist-count">${d.count}</span></div>`).join("")}
+      </div>
+      <p class="board-title">Achievements · ${done} av ${st.achievements.length}</p>
+      <div class="ach-grid">
+        ${st.achievements.map((a) => `
+          <div class="ach ${a.value >= a.goal ? "done" : ""}" title="${escapeHtml(a.text)}">
+            <span class="ach-icon">${a.icon}</span>
+            <span class="ach-title">${escapeHtml(a.title)}</span>
+            <span class="ach-text">${escapeHtml(a.text)}</span>
+            ${a.value >= a.goal ? `<span class="ach-done">Klar!</span>` :
+              `<span class="ach-progress"><span style="width:${(a.value / a.goal) * 100}%"></span></span><span class="ach-count">${a.value} / ${a.goal}</span>`}
+          </div>`).join("")}
+      </div>
+      <p class="board-title">Senaste rundorna</p>
+      ${st.history.length ? `<ol class="board history">${st.history.map((h) => `
+        <li><span class="board-name">${escapeHtml(day(h.day))}</span>
+          <span class="board-live">#${h.standing.rank} av ${h.standing.players}</span>
+          <span class="board-score">${h.score}</span></li>`).join("")}</ol>`
+        : `<p class="board-note">Inga avslutade rundor än – spela dagens runda!</p>`}
+      <button class="primary-btn profile-back" data-view="back" type="button">Tillbaka</button>
+      <button class="link-btn card-back" data-view="logout" type="button">Logga ut</button>`;
+    bindViewButtons();
   }
 
   // ---------- Recap: step through a finished run on the map ----------
@@ -593,10 +728,21 @@
   window.addEventListener("scroll", () => { if (window.scrollY || window.scrollX) window.scrollTo(0, 0); });
 
   // ---------- Boot ----------
-  async function boot() {
+  async function boot(notice) {
     setPlaying(false);
     card.innerHTML = `<p class="card-lead">Laddar dagens runda…</p>`;
     overlay.hidden = false;
+    // Coming back from a login link: store the login and move this browser's
+    // guest runs over to the account.
+    if (accountsOn) {
+      const login = await auth.handleRedirect();
+      if (login === "login") {
+        try { await api.claim(); } catch (err) { /* stats just won't include them */ }
+        notice = `Välkommen! Du är inloggad som ${auth.user().email}.`;
+      } else if (login === "error") {
+        notice = auth.lastError;
+      }
+    }
     try {
       state = await api.today();
     } catch (err) {
@@ -612,8 +758,17 @@
     setScore(state.score);
     if (bornMarker) { map.removeLayer(bornMarker); bornMarker = null; }
     if (deathMarker) { map.removeLayer(deathMarker); deathMarker = null; }
-    showCard();
+    showCard(notice ? { notice } : undefined);
   }
+
+  // A login link opened in a tab where the game is already open only changes
+  // the #… part of the address, which doesn't reload the page.
+  window.addEventListener("hashchange", () => {
+    if (accountsOn && /access_token|error_description/.test(location.hash)) {
+      if (recap) closeRecap();
+      boot();
+    }
+  });
 
   syncViewport();
   boot();
