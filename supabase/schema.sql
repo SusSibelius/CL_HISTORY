@@ -44,12 +44,41 @@ create table if not exists public.runs (
   score        int  not null default 0,
   hint_used    boolean not null default false,
   started_at   timestamptz,
-  finished_at  timestamptz,
-  unique (day, device_id)
+  finished_at  timestamptz
 );
 create index if not exists runs_day_score on public.runs (day, score desc);
 -- Players choose their own name before starting, so it is empty until then.
 alter table public.runs alter column username drop not null;
+
+-- ---------- Accounts (optional) ----------
+-- Players can play as guests (a run per browser per day, as before) or log in
+-- with an email link to keep statistics and achievements. A logged-in
+-- player's runs belong to their account: one run per day per account, on any
+-- device.
+alter table public.runs add column if not exists user_id uuid references auth.users(id) on delete set null;
+alter table public.runs drop constraint if exists runs_day_device_id_key;
+create unique index if not exists runs_guest_day on public.runs (day, device_id) where user_id is null;
+create unique index if not exists runs_user_day on public.runs (day, user_id) where user_id is not null;
+
+-- An account's name, reserved so guests can't play under it.
+create table if not exists public.profiles (
+  user_id     uuid primary key references auth.users(id) on delete cascade,
+  username    text,
+  created_at  timestamptz not null default now()
+);
+create unique index if not exists profiles_username on public.profiles (lower(username));
+
+-- Every guess, for statistics and achievements.
+create table if not exists public.guesses (
+  id          bigserial primary key,
+  run_id      uuid not null references public.runs(id) on delete cascade,
+  pos         int not null,
+  person_id   int not null,
+  correct     boolean not null,
+  guess       text,
+  created_at  timestamptz not null default now()
+);
+create index if not exists guesses_run on public.guesses (run_id);
 
 -- Words that aren't allowed in player names. Add your own any time:
 --   insert into hg_private.name_filter (word, whole_word) values ('example', true);
@@ -87,9 +116,11 @@ insert into hg_private.name_filter (word, whole_word) values
   ('hora', true), ('kuk', true), ('porr', true), ('bog', true), ('mongo', true), ('cp', true)
 on conflict (word) do nothing;
 
-alter table public.people enable row level security;
-alter table public.runs   enable row level security;
-revoke all on public.people, public.runs from anon, authenticated;
+alter table public.people   enable row level security;
+alter table public.runs     enable row level security;
+alter table public.profiles enable row level security;
+alter table public.guesses  enable row level security;
+revoke all on public.people, public.runs, public.profiles, public.guesses from anon, authenticated;
 
 -- ---------- Private helpers (not exposed through the API) ----------
 
@@ -276,14 +307,65 @@ begin
 end
 $$;
 
--- The device's run that is in progress. Also finds yesterday's run, so a run
+-- Is this run the caller's? A logged-in player's runs are found by account,
+-- a guest's by device.
+create or replace function hg_private.is_mine(r public.runs, p_device uuid) returns boolean
+language sql stable as $$
+  select case when auth.uid() is null then r.user_id is null and r.device_id = p_device
+              else r.user_id = auth.uid() end
+$$;
+
+-- The caller's run on a given day.
+create or replace function hg_private.my_run(p_device uuid, p_day date) returns public.runs
+language sql stable as $$
+  select * from public.runs r
+  where r.day = p_day and hg_private.is_mine(r, p_device)
+  limit 1
+$$;
+
+-- Today's run for the caller, created if needed. A logged-in player who
+-- hasn't played today takes over this device's guest row for today (if any).
+create or replace function hg_private.ensure_today(p_device uuid) returns public.runs
+language plpgsql volatile as $$
+declare
+  r public.runs;
+  uid uuid := auth.uid();
+begin
+  if p_device is null then raise exception 'Enhets-id saknas'; end if;
+  r := hg_private.my_run(p_device, hg_private.today());
+  if r.id is not null then
+    -- Keep an account's name on a run that hasn't started.
+    if uid is not null and r.started_at is null then
+      update public.runs set username = coalesce((select username from public.profiles where user_id = uid), username)
+      where id = r.id returning * into r;
+    end if;
+    return r;
+  end if;
+  if uid is null then
+    insert into public.runs (day, device_id) values (hg_private.today(), p_device)
+    on conflict (day, device_id) where user_id is null do nothing;
+  else
+    update public.runs set user_id = uid,
+           username = coalesce((select username from public.profiles where user_id = uid), username)
+    where day = hg_private.today() and device_id = p_device and user_id is null;
+    if not found then
+      insert into public.runs (day, device_id, user_id, username)
+      values (hg_private.today(), p_device, uid, (select username from public.profiles where user_id = uid))
+      on conflict (day, user_id) where user_id is not null do nothing;
+    end if;
+  end if;
+  return hg_private.my_run(p_device, hg_private.today());
+end
+$$;
+
+-- The caller's run that is in progress. Also finds yesterday's run, so a run
 -- that crosses midnight UTC can still be finished.
 create or replace function hg_private.active_run(p_device uuid) returns public.runs
 language sql stable as $$
-  select * from public.runs
-  where device_id = p_device and started_at is not null and finished_at is null
-    and day >= hg_private.today() - 1
-  order by day desc limit 1
+  select * from public.runs r
+  where hg_private.is_mine(r, p_device) and r.started_at is not null and r.finished_at is null
+    and r.day >= hg_private.today() - 1
+  order by r.day desc limit 1
 $$;
 
 -- ---------- Public API (called by the browser) ----------
@@ -291,14 +373,8 @@ $$;
 -- Today's state for this device; creates today's (still nameless) row if needed.
 create or replace function public.hg_today(p_device uuid) returns json
 language plpgsql volatile security definer set search_path = public, pg_temp as $$
-declare r public.runs;
 begin
-  if p_device is null then raise exception 'Enhets-id saknas'; end if;
-  insert into public.runs (day, device_id)
-  values (hg_private.today(), p_device)
-  on conflict (day, device_id) do nothing;
-  select * into r from public.runs where day = hg_private.today() and device_id = p_device;
-  return hg_private.state(r);
+  return hg_private.state(hg_private.ensure_today(p_device));
 end
 $$;
 
@@ -320,15 +396,23 @@ begin
   if hg_private.name_blocked(n) then
     raise exception 'Det namnet är inte tillåtet – välj ett annat';
   end if;
-  perform public.hg_today(p_device);
+  r := hg_private.ensure_today(p_device);
+  if r.started_at is not null then raise exception 'Rundan har redan startat'; end if;
+  -- Names of accounts are reserved for their owners.
+  if exists (select 1 from public.profiles
+             where lower(username) = lower(n) and user_id is distinct from auth.uid()) then
+    raise exception 'Det namnet tillhör ett konto – välj ett annat';
+  end if;
   if exists (select 1 from public.runs
-             where day = hg_private.today() and device_id <> p_device and lower(username) = lower(n)) then
+             where day = hg_private.today() and id <> r.id and lower(username) = lower(n)) then
     raise exception 'Någon har redan det namnet idag – välj ett annat';
   end if;
-  update public.runs set username = n
-  where day = hg_private.today() and device_id = p_device and started_at is null
-  returning * into r;
-  if r.id is null then raise exception 'Rundan har redan startat'; end if;
+  -- A logged-in player's name is their account's name from now on.
+  if auth.uid() is not null then
+    insert into public.profiles (user_id, username) values (auth.uid(), n)
+    on conflict (user_id) do update set username = excluded.username;
+  end if;
+  update public.runs set username = n where id = r.id returning * into r;
   return hg_private.state(r);
 end
 $$;
@@ -337,14 +421,11 @@ create or replace function public.hg_start(p_device uuid) returns json
 language plpgsql volatile security definer set search_path = public, pg_temp as $$
 declare r public.runs;
 begin
-  perform public.hg_today(p_device);
-  if exists (select 1 from public.runs where day = hg_private.today() and device_id = p_device
-             and started_at is null and username is null) then
+  r := hg_private.ensure_today(p_device);
+  if r.started_at is null and r.username is null then
     raise exception 'Välj ett namn först';
   end if;
-  update public.runs set started_at = now()
-  where day = hg_private.today() and device_id = p_device and started_at is null;
-  select * into r from public.runs where day = hg_private.today() and device_id = p_device;
+  update public.runs set started_at = coalesce(started_at, now()) where id = r.id returning * into r;
   return hg_private.state(r);
 end
 $$;
@@ -385,6 +466,9 @@ begin
     ok := false;
   end if;
 
+  insert into public.guesses (run_id, pos, person_id, correct, guess)
+  values (r.id, r.score, p.id, ok, left(p_guess, 80));
+
   if ok then
     update public.runs set score = score + 1,
            finished_at = case when score + 1 >= total then now() end
@@ -423,9 +507,8 @@ declare
   r public.runs;
   total int := (select count(*) from public.people);
 begin
-  select * into r from public.runs
-  where day = hg_private.today() and device_id = p_device and finished_at is not null;
-  if r.id is null then raise exception 'Rundan är inte slut än'; end if;
+  r := hg_private.my_run(p_device, hg_private.today());
+  if r.id is null or r.finished_at is null then raise exception 'Rundan är inte slut än'; end if;
   return (
     select coalesce(json_agg(json_build_object(
              'correct', pos < r.score,
@@ -443,7 +526,8 @@ $$;
 create or replace function public.hg_leaderboard(p_device uuid, p_limit int default 20) returns json
 language sql stable security definer set search_path = public, pg_temp as $$
   with ranked as (
-    select username, score, finished_at is null as playing, device_id = p_device as me,
+    select username, score, finished_at is null as playing,
+           id = (hg_private.my_run(p_device, hg_private.today())).id as me,
            rank() over (order by score desc) as rank,
            row_number() over (order by score desc, coalesce(finished_at, 'infinity'), started_at) as n
     from public.runs
@@ -454,6 +538,116 @@ language sql stable security definer set search_path = public, pg_temp as $$
          order by n), '[]'::json)
   from ranked
   where n <= least(greatest(p_limit, 1), 100) or me
+$$;
+
+-- ---------- Accounts: claim guest runs, statistics, achievements ----------
+
+-- After logging in: this browser's guest runs become the account's (for days
+-- the account hasn't played), and the account gets the name last used here if
+-- it has none yet and nobody else has it.
+create or replace function public.hg_claim(p_device uuid) returns json
+language plpgsql volatile security definer set search_path = public, pg_temp as $$
+declare
+  uid uuid := auth.uid();
+  n int;
+  last_name text;
+begin
+  if uid is null then raise exception 'Inte inloggad'; end if;
+  insert into public.profiles (user_id) values (uid) on conflict (user_id) do nothing;
+  update public.runs g set user_id = uid
+  where g.device_id = p_device and g.user_id is null
+    and not exists (select 1 from public.runs u where u.user_id = uid and u.day = g.day);
+  get diagnostics n = row_count;
+  select username into last_name from public.runs
+  where user_id = uid and username is not null order by day desc limit 1;
+  update public.profiles set username = last_name
+  where user_id = uid and username is null and last_name is not null
+    and not exists (select 1 from public.profiles o where lower(o.username) = lower(last_name) and o.user_id <> uid);
+  return json_build_object('claimed', n, 'username', (select username from public.profiles where user_id = uid));
+end
+$$;
+
+-- Rough continent of a birthplace, for the "Världsresenär" achievement.
+create or replace function hg_private.continent(lat float8, lng float8) returns text
+language sql immutable as $$
+  select case
+    when lat between -56 and 13 and lng between -82 and -34 then 'Sydamerika'
+    when lng between -170 and -50 and lat > 7 then 'Nordamerika'
+    when lat between -50 and 0 and lng between 110 and 180 then 'Oceanien'
+    when lat between 35 and 72 and lng between -25 and 45 then 'Europa'
+    when lat between -35 and 37.5 and (lng between -20 and 33 or (lng between 33 and 52 and lat < 12)) then 'Afrika'
+    when lng between 25 and 180 then 'Asien'
+    else 'Övrigt' end
+$$;
+
+-- Everything for the profile view: numbers, the spread of results, recent
+-- runs and achievements (with progress).
+create or replace function public.hg_stats() returns json
+language plpgsql stable security definer set search_path = public, pg_temp as $$
+declare
+  uid uuid := auth.uid();
+  total int := (select count(*) from public.people);
+  v_played int; v_best int; v_avg numeric; v_correct int; v_perfect int;
+  v_cur int; v_long int;
+  v_ancient int; v_medieval int; v_continents int;
+begin
+  if uid is null then raise exception 'Inte inloggad'; end if;
+
+  select count(*), coalesce(max(score), 0), round(avg(score)::numeric, 1), coalesce(sum(score), 0),
+         count(*) filter (where score >= total)
+    into v_played, v_best, v_avg, v_correct, v_perfect
+  from public.runs where user_id = uid and finished_at is not null;
+
+  -- Days in a row with a run: the current streak (ending today or yesterday)
+  -- and the longest ever.
+  with days as (select distinct day from public.runs where user_id = uid and started_at is not null),
+       islands as (select day, day - (row_number() over (order by day))::int as grp from days),
+       streaks as (select count(*) as len, max(day) as last_day from islands group by grp)
+  select coalesce((select len from streaks where last_day >= hg_private.today() - 1 order by last_day desc limit 1), 0),
+         coalesce((select max(len) from streaks), 0)
+    into v_cur, v_long;
+
+  select count(*) filter (where p.born_year < 0),
+         count(*) filter (where p.born_year between 500 and 1499),
+         count(distinct hg_private.continent(p.born_lat, p.born_lng)) filter (where hg_private.continent(p.born_lat, p.born_lng) <> 'Övrigt')
+    into v_ancient, v_medieval, v_continents
+  from public.guesses g join public.runs r on r.id = g.run_id join public.people p on p.id = g.person_id
+  where r.user_id = uid and g.correct;
+
+  return json_build_object(
+    'username', (select username from public.profiles where user_id = uid),
+    'played', v_played,
+    'best', v_best,
+    'average', coalesce(v_avg, 0),
+    'total_correct', v_correct,
+    'current_days', v_cur,
+    'longest_days', v_long,
+    'distribution', (
+      select json_agg(json_build_object('label', b.label, 'count',
+               (select count(*) from public.runs
+                where user_id = uid and finished_at is not null and score between b.lo and b.hi)) order by b.lo)
+      from (values ('0', 0, 0), ('1–2', 1, 2), ('3–5', 3, 5), ('6–10', 6, 10), ('11–20', 11, 20), ('21+', 21, 1000000)) b(label, lo, hi)
+    ),
+    'history', (
+      select coalesce(json_agg(json_build_object('day', x.day, 'score', x.score, 'standing', hg_private.rank_of(x)) order by x.day desc), '[]'::json)
+      from (select * from public.runs where user_id = uid and finished_at is not null order by day desc limit 10) x
+    ),
+    'achievements', json_build_array(
+      json_build_object('id', 'first',     'icon', '🎯', 'title', 'Första rundan',  'text', 'Spela din första runda',                    'value', least(v_played, 1),    'goal', 1),
+      json_build_object('id', 'row10',     'icon', '🔥', 'title', 'Tio i rad',      'text', 'Klara 10 personer i en runda',             'value', least(v_best, 10),     'goal', 10),
+      json_build_object('id', 'row25',     'icon', '⚡', 'title', 'Tjugofem i rad', 'text', 'Klara 25 personer i en runda',             'value', least(v_best, 25),     'goal', 25),
+      json_build_object('id', 'row50',     'icon', '🏆', 'title', 'Femtio i rad',   'text', 'Klara 50 personer i en runda',             'value', least(v_best, 50),     'goal', 50),
+      json_build_object('id', 'perfect',   'icon', '👑', 'title', 'Perfekt runda',  'text', 'Klara alla personer i en runda',           'value', least(v_perfect, 1),   'goal', 1),
+      json_build_object('id', 'week',      'icon', '📅', 'title', 'En hel vecka',   'text', 'Spela 7 dagar i rad',                      'value', least(v_long, 7),      'goal', 7),
+      json_build_object('id', 'month',     'icon', '🗓️', 'title', 'En hel månad',   'text', 'Spela 30 dagar i rad',                     'value', least(v_long, 30),     'goal', 30),
+      json_build_object('id', 'c100',      'icon', '💯', 'title', 'Hundra rätt',    'text', 'Gissa rätt 100 gånger totalt',             'value', least(v_correct, 100), 'goal', 100),
+      json_build_object('id', 'c1000',     'icon', '🧠', 'title', 'Tusen rätt',     'text', 'Gissa rätt 1 000 gånger totalt',           'value', least(v_correct, 1000),'goal', 1000),
+      json_build_object('id', 'antiquity', 'icon', '🏛️', 'title', 'Antiken',        'text', 'Gissa rätt på någon född före Kristus',    'value', least(v_ancient, 1),   'goal', 1),
+      json_build_object('id', 'medieval',  'icon', '🏰', 'title', 'Medeltiden',     'text', 'Gissa rätt på någon född 500–1499',        'value', least(v_medieval, 1),  'goal', 1),
+      json_build_object('id', 'world',     'icon', '🌍', 'title', 'Världsresenär',  'text', 'Gissa rätt på personer födda på 5 kontinenter', 'value', least(v_continents, 5), 'goal', 5)
+    )
+  );
+end
 $$;
 
 -- The guess box no longer suggests names, so the list of people isn't exposed.
@@ -467,3 +661,5 @@ grant execute on function
   public.hg_guess(uuid, text), public.hg_hint(uuid),
   public.hg_leaderboard(uuid, int), public.hg_recap(uuid)
 to anon, authenticated;
+grant execute on function public.hg_claim(uuid), public.hg_stats() to authenticated;
+revoke execute on function public.hg_claim(uuid), public.hg_stats() from public, anon;

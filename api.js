@@ -37,17 +37,23 @@
   // ---------- Online (Supabase) ----------
   function remoteApi(url, key) {
     const device = deviceId();
-    async function rpc(fn, args) {
+    const auth = window.HG_AUTH;
+    // Logged-in players call the game as themselves (their account), guests
+    // with the public key. An expired login is renewed once, and if that
+    // fails the call is made as a guest.
+    async function rpc(fn, args, retried) {
+      const token = (auth && (await auth.token(retried === "refresh"))) || key;
       const res = await fetch(`${url.replace(/\/$/, "")}/rest/v1/rpc/${fn}`, {
         method: "POST",
         headers: {
           apikey: key,
-          Authorization: `Bearer ${key}`,
+          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(args || {}),
       });
       const body = await res.json().catch(() => null);
+      if (res.status === 401 && token !== key && !retried) return rpc(fn, args, "refresh");
       if (!res.ok) throw new Error((body && body.message) || `Förfrågan misslyckades (${res.status})`);
       return body;
     }
@@ -59,6 +65,9 @@
       guess: (text) => rpc("hg_guess", { p_device: device, p_guess: text }),
       leaderboard: (limit) => rpc("hg_leaderboard", { p_device: device, p_limit: limit || 10 }),
       recap: () => rpc("hg_recap", { p_device: device }),
+      // Accounts (only when logged in).
+      claim: () => rpc("hg_claim", { p_device: device }),
+      stats: () => rpc("hg_stats"),
     };
   }
 
@@ -96,7 +105,7 @@
   const { normalize: norm, words, answerMatches } = window.HG_MATCH;
 
   function localApi() {
-    const ready = loadScript("data.js?v=16");
+    const ready = loadScript("data.js?v=17");
     const todayKey = () => new Date().toISOString().slice(0, 10); // UTC day, like the server
 
     function load() {
